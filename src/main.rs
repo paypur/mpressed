@@ -15,7 +15,7 @@ struct SongData {
 fn main() {
     let db = Connection::open(FILE_NAME).unwrap();
 
-    &db.execute("CREATE TABLE if not exists song_data (
+    db.execute("CREATE TABLE if not exists song_data (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         artist TEXT,
                         album TEXT,
@@ -24,7 +24,7 @@ fn main() {
                     )", [])
         .expect("Failed to create song_data table");
 
-    &db.execute("CREATE TABLE if not exists song_plays (
+    db.execute("CREATE TABLE if not exists song_plays (
                         id INTEGER,
                         date TEXT,
                         plays INTEGER,
@@ -72,14 +72,14 @@ fn event_loop(db: &Connection) {
                                 let row = query.next().unwrap();
                                 let id: u32 = row.unwrap().get(0).unwrap();
 
-                                match &db.prepare("UPDATE song_plays SET plays = plays + 1 WHERE id = (?1) AND date = (?2)")
+                                match db.prepare("UPDATE song_plays SET plays = plays + 1 WHERE id = (?1) AND date = (?2)")
                                     .unwrap()
                                     .execute((id, &current_date)) {
                                     Ok(update) => {
                                         if *update == 1 {
                                             println!("Updated song_plays: {:?}", (&song.artist, &song.album, &song.title));
                                         } else {
-                                            match &db.execute("INSERT INTO song_plays (id, date, plays) VALUES (?1, ?2, ?3)",
+                                            match db.execute("INSERT INTO song_plays (id, date, plays) VALUES (?1, ?2, ?3)",
                                                               (id, &current_date, 1)) {
                                                 Ok(_) => println!("Inserted song_plays: {:?}", (&song.artist, &song.album, &song.title)),
                                                 Err(_) => println!("Failed to insert song_plays: {:?}", (&song.artist, &song.album, &song.title)),

@@ -1,16 +1,7 @@
 use chrono::Local;
 use mpris::{Event, PlayerFinder};
 use rusqlite::{Connection};
-
-const FILE_NAME: &str = "mpressed.db";
-const MIN_PLAYTIME: u8 = 10;
-
-#[derive(Debug)]
-struct SongData {
-    artist: String,
-    album: String,
-    title: String,
-}
+use mpressed::{SongData, FILE_NAME, MIN_PLAYTIME};
 
 fn main() {
     let db = Connection::open(FILE_NAME).unwrap();
@@ -76,7 +67,7 @@ fn event_loop(db: &Connection) {
                                     .unwrap()
                                     .execute((id, &current_date)) {
                                     Ok(update) => {
-                                        if *update == 1 {
+                                        if update as u32 == 1 {
                                             println!("Updated song_plays: {:?}", (&song.artist, &song.album, &song.title));
                                         } else {
                                             match db.execute("INSERT INTO song_plays (id, date, plays) VALUES (?1, ?2, ?3)",
@@ -102,7 +93,7 @@ fn event_loop(db: &Connection) {
 
                     song_option = Some(
                         SongData {
-                            artist: data.artists().unwrap().join(" / "),
+                            artist: data.artists().unwrap().join(","),
                             album: data.album_name().unwrap().to_string(),
                             title: data.title().unwrap().to_string(),
                         }

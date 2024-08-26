@@ -11,11 +11,15 @@ pub struct SongData {
 #[derive(Debug, Default)]
 pub struct SongDataPlays {
     pub song_data: SongData,
-    pub plays: u32,
-    pub plays_string: String,
+    pub plays: String,
+    pub plays_u32: u32,
 }
 
 impl SongDataPlays {
+    pub const fn ref_array(&self) -> [&String; 4] {
+        [&self.song_data.artist, &self.song_data.album, &self.song_data.title, &self.plays]
+    }
+
     pub fn artist(&self) -> &str {
         &self.song_data.artist
     }
@@ -29,12 +33,6 @@ impl SongDataPlays {
     }
 
     pub fn plays(&self) -> &str {
-        &self.plays_string
-    }
-}
-
-impl AsRef<SongData> for SongDataPlays {
-    fn as_ref(&self) -> &SongData {
-        &self.song_data
+        &self.plays
     }
 }

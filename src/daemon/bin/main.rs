@@ -24,8 +24,6 @@ fn main() {
         .expect("Failed to create song_plays table");
 
     event_loop(&db);
-
-    db.close().unwrap();
 }
 
 fn event_loop(db: &Connection) {

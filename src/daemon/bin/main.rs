@@ -1,7 +1,9 @@
 use chrono::Local;
-use mpris::{Event, PlayerFinder};
+use mpris::{Event, FindingError, Player, PlayerFinder};
 use rusqlite::{Connection};
 use mpressed::{SongData, FILE_NAME, MIN_PLAYTIME};
+
+const IDENTITIES: [&str; 2] = ["VLC media player", "Brave"];
 
 fn main() {
     let db = Connection::open(FILE_NAME).unwrap();
@@ -23,18 +25,40 @@ fn main() {
                     )", [])
         .expect("Failed to create song_plays table");
 
-    event_loop(&db);
+    player_loop(&db);
 }
 
-fn event_loop(db: &Connection) {
-    let player = PlayerFinder::new()
-        .expect("Could not connect to D-Bus")
-        .find_by_name("VLC media player")
-        // .find_active()
-        .expect("Could not find active player");
+fn player_loop(db: &Connection) {
+    let mut player: Player;
 
-    println!("Showing event stream for player {}...\n(Exit with Ctrl-C)\n", player.identity());
+    loop {
+        let mut player_finder: Result<Player, FindingError>;
+            // .find_active()
+            // .expect("Could not find active player");
 
+         for identity in IDENTITIES {
+            player_finder = PlayerFinder::new()
+                .expect("Could not connect to D-Bus")
+                .find_by_name(identity);
+
+            match player_finder {
+                Ok(find) => {
+                    player = find;
+                    break;
+                }
+                Err(_) => {}
+            }
+        }
+
+        println!("Showing event stream for player {}", player.identity());
+
+        event_handler(db, &mut player);
+
+        println!("Event stream ended.");
+    }
+}
+
+fn event_handler(db: &Connection, player: &mut Player) {
     let mut track_last_changed: i64 = 0;
     let mut song_option: Option<SongData> = None;
 
@@ -48,11 +72,10 @@ fn event_loop(db: &Connection) {
                     if current_time - track_last_changed > MIN_PLAYTIME as i64 {
                         match song_option {
                             Some(song) => {
-                                match db.execute("INSERT OR IGNORE INTO song_data (artist, album, title) VALUES (?1, ?2, ?3)",
-                                                 (&song.artist, &song.album, &song.title)) {
-                                    Ok(_) => println!("Inserted song_data: {:?}", (&song.artist, &song.album, &song.title)),
-                                    Err(_) => println!("Failed to insert song_data: {:?}", (&song.artist, &song.album, &song.title)),
-                                }
+                                db.execute("INSERT OR IGNORE INTO song_data (artist, album, title) VALUES (?1, ?2, ?3)",
+                                                 (&song.artist, &song.album, &song.title)).unwrap();
+                                    // Ok(_) => println!("Inserted song_data: {:?}", (&song.artist, &song.album, &song.title)),
+                                    // Err(_) => println!("Failed to insert song_data: {:?}", (&song.artist, &song.album, &song.title)),
 
                                 let mut statement = db.prepare("SELECT ID FROM song_data WHERE artist = (?1) AND album = (?2) AND title = (?3) LIMIT 1")
                                     .unwrap();
@@ -69,7 +92,7 @@ fn event_loop(db: &Connection) {
                                             println!("Updated song_plays: {:?}", (&song.artist, &song.album, &song.title));
                                         } else {
                                             match db.execute("INSERT INTO song_plays (id, date, plays) VALUES (?1, ?2, ?3)",
-                                                              (id, &current_date, 1)) {
+                                                             (id, &current_date, 1)) {
                                                 Ok(_) => println!("Inserted song_plays: {:?}", (&song.artist, &song.album, &song.title)),
                                                 Err(_) => println!("Failed to insert song_plays: {:?}", (&song.artist, &song.album, &song.title)),
                                             }
@@ -105,6 +128,4 @@ fn event_loop(db: &Connection) {
             }
         }
     }
-
-    println!("Event stream ended.");
 }

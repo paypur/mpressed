@@ -77,10 +77,8 @@ fn event_handler(db: &Connection, player: &mut Player) {
                                     // Ok(_) => println!("Inserted song_data: {:?}", (&song.artist, &song.album, &song.title)),
                                     // Err(_) => println!("Failed to insert song_data: {:?}", (&song.artist, &song.album, &song.title)),
 
-                                let mut statement = db.prepare("SELECT ID FROM song_data WHERE artist = (?1) AND album = (?2) AND title = (?3) LIMIT 1")
-                                    .unwrap();
-                                let mut query = statement.query((&song.artist, &song.album, &song.title))
-                                    .unwrap();
+                                let mut statement = db.prepare("SELECT ID FROM song_data WHERE artist = (?1) AND album = (?2) AND title = (?3) LIMIT 1").unwrap();
+                                let mut query = statement.query((&song.artist, &song.album, &song.title)).unwrap();
                                 let row = query.next().unwrap();
                                 let id: u32 = row.unwrap().get(0).unwrap();
 

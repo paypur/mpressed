@@ -1,9 +1,12 @@
 use chrono::Local;
-use mpris::{Event, FindingError, Player, PlayerFinder};
+use mpris::{Event, Player, PlayerFinder};
 use rusqlite::{Connection};
 use mpressed::{SongData, FILE_NAME, MIN_PLAYTIME};
 
-const IDENTITIES: [&str; 2] = ["VLC media player", "Brave"];
+const IDENTITIES: [&str; 1] = [
+    "VLC media player"
+    // "Brave"
+];
 
 fn main() {
     let db = Connection::open(FILE_NAME).unwrap();
@@ -29,31 +32,22 @@ fn main() {
 }
 
 fn player_loop(db: &Connection) {
-    let mut player: Player;
+    let player_finder: PlayerFinder = PlayerFinder::new().expect("Could not connect to D-Bus");
+    let mut player: Player = player_finder.find_active().unwrap();
 
     loop {
-        let mut player_finder: Result<Player, FindingError>;
-            // .find_active()
-            // .expect("Could not find active player");
-
          for identity in IDENTITIES {
-            player_finder = PlayerFinder::new()
-                .expect("Could not connect to D-Bus")
-                .find_by_name(identity);
-
-            match player_finder {
+            match player_finder.find_by_name(identity) {
                 Ok(find) => {
                     player = find;
                     break;
                 }
                 Err(_) => {}
             }
-        }
+         }
 
         println!("Showing event stream for player {}", player.identity());
-
         event_handler(db, &mut player);
-
         println!("Event stream ended.");
     }
 }
@@ -112,7 +106,7 @@ fn event_handler(db: &Connection, player: &mut Player) {
 
                     song_option = Some(
                         SongData {
-                            artist: data.artists().unwrap().join(","),
+                            artist: data.artists().unwrap().join(" / "),
                             album: data.album_name().unwrap().to_string(),
                             title: data.title().unwrap().to_string(),
                         }

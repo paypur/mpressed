@@ -56,68 +56,62 @@ fn event_handler(db: &Connection, player: &mut Player) {
     let mut track_last_changed: i64 = 0;
     let mut song_option: Option<SongData> = None;
 
-    for event in player.events().expect("Could not start event stream") {
-        match event {
-            Ok(event) => match event {
-                Event::TrackChanged(data) => {
-                    let current_date = Local::now().date_naive().to_string();
-                    let current_time = Local::now().timestamp();
+    for event_result in player.events().expect("Could not start event stream") {
+        if event_result.is_err() {
+            println!("D-Bus error: {}. Aborting.", event_result.unwrap_err());
+            break;
+        }
 
-                    if current_time - track_last_changed > MIN_PLAYTIME as i64 {
-                        match song_option {
-                            Some(song) => {
-                                db.execute("INSERT OR IGNORE INTO song_data (artist, album, title) VALUES (?1, ?2, ?3)",
-                                                 (&song.artist, &song.album, &song.title)).unwrap();
-                                    // Ok(_) => println!("Inserted song_data: {:?}", (&song.artist, &song.album, &song.title)),
-                                    // Err(_) => println!("Failed to insert song_data: {:?}", (&song.artist, &song.album, &song.title)),
+        match event_result.unwrap() {
+            Event::TrackChanged(data) => {
+                let current_date = Local::now().date_naive().to_string();
+                let current_time = Local::now().timestamp();
 
-                                let mut statement = db.prepare("SELECT ID FROM song_data WHERE artist = (?1) AND album = (?2) AND title = (?3) LIMIT 1").unwrap();
-                                let mut query = statement.query((&song.artist, &song.album, &song.title)).unwrap();
-                                let row = query.next().unwrap();
-                                let id: u32 = row.unwrap().get(0).unwrap();
-
-                                match db.prepare("UPDATE song_plays SET plays = plays + 1 WHERE id = (?1) AND date = (?2)")
-                                    .unwrap()
-                                    .execute((id, &current_date)) {
-                                    Ok(update) => {
-                                        if update as u32 == 1 {
-                                            println!("Updated song_plays: {:?}", (&song.artist, &song.album, &song.title));
-                                        } else {
-                                            match db.execute("INSERT INTO song_plays (id, date, plays) VALUES (?1, ?2, ?3)",
-                                                             (id, &current_date, 1)) {
-                                                Ok(_) => println!("Inserted song_plays: {:?}", (&song.artist, &song.album, &song.title)),
-                                                Err(_) => println!("Failed to insert song_plays: {:?}", (&song.artist, &song.album, &song.title)),
-                                            }
-                                        }
-                                    }
-                                    Err(_) => {
-                                        println!("Failed to update song_plays: {:?}", (&song.artist, &song.album, &song.title));
-                                    }
-                                }
-                            }
-                            None => (),
-                        }
-                    } else {
+                if current_time - track_last_changed > MIN_PLAYTIME as i64 {
+                    if song_option.is_some() {
                         let song = song_option.unwrap();
-                        println!("Skipped song: {:?}, minimum playtime ({}s) not met.", (&song.artist, &song.album, &song.title), MIN_PLAYTIME);
-                    }
 
-                    track_last_changed = current_time;
+                        db.execute("INSERT OR IGNORE INTO song_data (artist, album, title) VALUES (?1, ?2, ?3)",
+                                         (&song.artist, &song.album, &song.title))
+                            .expect(&format!("Failed to inserted song_data: {:?}", (&song.artist, &song.album, &song.title)));
 
-                    song_option = Some(
-                        SongData {
-                            artist: data.artists().unwrap().join(" / "),
-                            album: data.album_name().unwrap().to_string(),
-                            title: data.title().unwrap().to_string(),
+                        let mut statement = db.prepare("SELECT ID FROM song_data WHERE artist = (?1) AND album = (?2) AND title = (?3) LIMIT 1").unwrap();
+                        let mut query = statement.query((&song.artist, &song.album, &song.title)).unwrap();
+                        let row = query.next().unwrap();
+                        let id: u32 = row.unwrap().get(0).unwrap();
+
+                        let update = db.prepare("UPDATE song_plays SET plays = plays + 1 WHERE id = (?1) AND date = (?2)")
+                            .unwrap()
+                            .execute((id, &current_date))
+                            .expect(&format!("Failed to update song_plays: {:?}", (&song.artist, &song.album, &song.title)));
+
+                        if update as u32 == 1 {
+                            println!("Updated song_plays: {:?}", (&song.artist, &song.album, &song.title));
+                        } else {
+                            match db.execute("INSERT INTO song_plays (id, date, plays) VALUES (?1, ?2, ?3)",
+                                             (id, &current_date, 1)) {
+                                Ok(_) => println!("Inserted song_plays: {:?}", (&song.artist, &song.album, &song.title)),
+                                Err(_) => println!("Failed to insert song_plays: {:?}", (&song.artist, &song.album, &song.title)),
+                            }
                         }
-                    );
+                    }
+                } else {
+                    let song = song_option.unwrap();
+                    println!("Skipped song: {:?}, minimum playtime ({}s) not met.", (&song.artist, &song.album, &song.title), MIN_PLAYTIME);
                 }
-                _ => (),
+
+                track_last_changed = current_time;
+
+                song_option = Some(
+                    SongData {
+                        artist: data.artists().unwrap().join(" / "),
+                        album: data.album_name().unwrap().to_string(),
+                        title: data.title().unwrap().to_string(),
+                    }
+                );
             },
-            Err(err) => {
-                println!("D-Bus error: {}. Aborting.", err);
-                break;
-            }
+            Event::Playing => (),
+            _ => (),
         }
     }
 }

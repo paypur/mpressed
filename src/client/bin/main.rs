@@ -9,8 +9,8 @@ use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::symbols::border;
 use ratatui::text::{Line, Text};
 use ratatui::widgets::block::Title;
-use ratatui::widgets::{Block, BorderType, Cell, List, Padding, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState};
-use ratatui::{crossterm::event::{self, KeyCode}, Frame, Terminal};
+use ratatui::widgets::{Block, BorderType, Borders, Cell, List, ListState, Padding, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState};
+use ratatui::{crossterm::event::{self, KeyCode}, symbols, Frame, Terminal};
 use rusqlite::Connection;
 use std::io::Result;
 use std::time::{Duration, Instant};
@@ -40,10 +40,16 @@ struct TuiState<'a> {
     sorting: Sorting,
     grouping: Grouping,
     header: [&'a str; 4],
+    sorting_state: ListState,
+    grouping_state: ListState,
     table_state: TableState,
     scroll_state: ScrollbarState,
     exit: bool,
 }
+
+const SELECTED_STYLE: Style = Style::new()
+    .add_modifier(Modifier::REVERSED)
+    .fg(Color::Red);
 
 impl<'a> TuiState<'a> {
     fn new() -> Self {
@@ -54,6 +60,8 @@ impl<'a> TuiState<'a> {
             data_vec,
             sorting: Sorting::default(),
             grouping: Grouping::default(),
+            sorting_state: ListState::default().with_selected(Some(0)),
+            grouping_state: ListState::default().with_selected(Some(0)),
             header: ["<Artist>", "<Album>", "<Title>", ">Plays<"],
             table_state: TableState::default().with_selected(0),
             scroll_state: ScrollbarState::new(length),
@@ -130,44 +138,60 @@ impl<'a> TuiState<'a> {
         ]).areas(frame.area());
 
         let [navbar_area, sidebar_area, table_area] = Layout::horizontal([
-            Constraint::Fill(2),
             Constraint::Fill(1),
-            Constraint::Fill(17)
+            Constraint::Length(12),
+            Constraint::Fill(9)
         ]).areas(main_area);
 
-
-
-        self.render_lists(frame, sidebar_area);
+        self.render_sidebar(frame, sidebar_area);
         self.render_table(frame, table_area);
         self.render_scrollbar(frame, table_area);
 
         self.render_footer(frame, footer_area);
     }
 
-    fn render_lists(&self, frame: &mut Frame, area: Rect) {
+    fn render_sidebar(&mut self, frame: &mut Frame, area: Rect) {
+        let collapsed_top_right_border_set = symbols::border::Set {
+            // top_left: symbols::line::NORMAL.vertical_right,
+            top_right: symbols::line::NORMAL.horizontal_down,
+            ..symbols::border::PLAIN
+        };
+
+        let collapsed_top_and_right_border_set = symbols::border::Set {
+            top_left: symbols::line::NORMAL.vertical_right,
+            top_right: symbols::line::NORMAL.vertical_left,
+            bottom_right: symbols::line::NORMAL.horizontal_up,
+            ..symbols::border::PLAIN
+        };
+
         let [sort_area, group_area] = Layout::vertical([
             Constraint::Fill(1),
             Constraint::Fill(1)
         ]).areas(area);
 
-        let block = Block::bordered()
+        let sorting_block = Block::bordered()
             .title(Line::raw(" Sorting ").centered())
-            .border_set(border::PLAIN)
+            .borders(Borders::TOP | Borders::RIGHT | Borders::LEFT)
+            .border_set(collapsed_top_right_border_set)
+            // .border_set(border::PLAIN)
             .padding(Padding::uniform(1));
 
-        let sort_list = List::new(["Artist", "Album", "Title", "Plays"])
-            .block(block);
+        let sort_list = List::new(["Plays", "Artist", "Album", "Title"])
+            .block(sorting_block)
+            .highlight_style(SELECTED_STYLE);
 
         let group_block = Block::bordered()
             .title(Line::raw(" Grouping ").centered())
-            .border_set(border::PLAIN)
+            // .borders(Borders::TOP | Borders::LEFT | Borders::BOTTOM)
+            .border_set(collapsed_top_and_right_border_set)
             .padding(Padding::uniform(1));
 
-        let group_list = List::new(["Artist", "Album", "Title", "Date"])
-            .block(group_block);
+        let group_list = List::new(["Date", "Album", "Artist"])
+            .block(group_block)
+            .highlight_style(SELECTED_STYLE);
 
-        frame.render_widget(sort_list, sort_area);
-        frame.render_widget(group_list, group_area);
+        frame.render_stateful_widget(sort_list, sort_area, &mut self.sorting_state);
+        frame.render_stateful_widget(group_list, group_area, &mut self.grouping_state);
     }
 
     // https://github.com/ratatui/ratatui/issues/1004
@@ -185,8 +209,8 @@ impl<'a> TuiState<'a> {
 
         let widths = [
             Constraint::Fill(1),
-            Constraint::Fill(2),
-            Constraint::Fill(2),
+            Constraint::Fill(3),
+            Constraint::Fill(3),
             Constraint::Max(7)
         ];
 
@@ -205,16 +229,13 @@ impl<'a> TuiState<'a> {
             // .title(title.alignment(Alignment::Center))
             // .title(info.alignment(Alignment::Center).position(Position::Bottom))
             .padding(Padding::new(1, 3, 0, 0))
-            .border_set(border::PLAIN);
-
-        let selected_style = Style::default()
-            .add_modifier(Modifier::REVERSED)
-            .fg(Color::Red);
+            // .border_set(border::PLAIN)
+            .borders(Borders::TOP | Borders::BOTTOM | Borders::RIGHT);
 
         let table = Table::new(rows, widths)
             .header(header)
             .block(block)
-            .highlight_style(selected_style);
+            .highlight_style(SELECTED_STYLE);
 
         frame.render_stateful_widget(table, area, &mut self.table_state);
     }

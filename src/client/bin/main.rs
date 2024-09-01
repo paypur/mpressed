@@ -27,19 +27,40 @@ enum Sorting {
 
 #[derive(Debug, Default)]
 enum Grouping {
-    Artist,
-    Album,
-    Title,
     #[default]
     Date,
+    Artist,
+    Album,
+    // Title,
 }
 
+impl Grouping {
+    pub fn prev(&mut self){
+        *self = match self {
+            Grouping::Date => Grouping::Date,
+            Grouping::Artist => Grouping::Date,
+            Grouping::Album => Grouping::Artist
+        }
+    }
+
+    pub fn next(&mut self) {
+        *self = match self {
+            Grouping::Date => Grouping::Artist,
+            Grouping::Artist => Grouping::Album,
+            Grouping::Album => Grouping::Album
+        };
+    }
+}
+
+const DATE_HEADER: [&str; 4] = ["[Artist]", "[Album]", "[Title]", "[Plays]"];
+const ARTIST_HEADER: [&str; 2] = ["[Artist]", "[Plays]"];
+const ALBUM_HEADER: [&str; 2] = ["[Album]", "[Plays]"];
+
 #[derive(Debug, Default)]
-struct TuiState<'a> {
+struct TuiState {
     data_vec: Vec<SongDataPlays>,
     sorting: Sorting,
     grouping: Grouping,
-    header: [&'a str; 4],
     sorting_state: ListState,
     grouping_state: ListState,
     table_state: TableState,
@@ -51,9 +72,9 @@ const SELECTED_STYLE: Style = Style::new()
     .add_modifier(Modifier::REVERSED)
     .fg(Color::Red);
 
-impl<'a> TuiState<'a> {
+impl TuiState {
     fn new() -> Self {
-        let data_vec = TuiState::get_data();
+        let data_vec = TuiState::get_data_group_date();
         let length = data_vec.len() - 1;
 
         TuiState {
@@ -62,7 +83,6 @@ impl<'a> TuiState<'a> {
             grouping: Grouping::default(),
             sorting_state: ListState::default().with_selected(Some(0)),
             grouping_state: ListState::default().with_selected(Some(0)),
-            header: ["<Artist>", "<Album>", "<Title>", ">Plays<"],
             table_state: TableState::default().with_selected(0),
             scroll_state: ScrollbarState::new(length),
             exit: false,
@@ -75,8 +95,6 @@ impl<'a> TuiState<'a> {
         let mut last_tick = Instant::now();
 
         while !self.exit {
-            // artist totals
-            // SELECT artist, SUM(plays) FROM song_data JOIN song_plays ON song_data.id = song_plays.id GROUP BY artist ORDER BY SUM(plays) DESC
 
             terminal.draw(|frame| self.render_frame(frame))?;
             let timeout = tick_rate.saturating_sub(last_tick.elapsed());
@@ -93,17 +111,16 @@ impl<'a> TuiState<'a> {
         Ok(())
     }
 
-    fn get_data() -> Vec<SongDataPlays> {
+    fn get_data_group_date() -> Vec<SongDataPlays> {
         let db: Connection = Connection::open(FILE_NAME).unwrap();
 
         let mut statement = db.prepare("SELECT artist, album, title, SUM(plays) FROM song_data JOIN song_plays ON song_data.id = song_plays.id GROUP BY song_data.id ORDER BY SUM(plays) DESC").unwrap();
-        let rows = statement.query_map((), |row| {
+        let rows= statement.query_map((), |row| {
             let song_data = SongData {
                 artist: row.get(0)?,
                 album: row.get(1)?,
-                title: row.get(2)?,
+                title: row.get(2).unwrap(),
             };
-
             Ok(SongDataPlays {
                 song_data,
                 plays: row.get::<usize, u32>(3)?.to_string(),
@@ -114,22 +131,65 @@ impl<'a> TuiState<'a> {
         rows.map(|r| {r.unwrap()}).collect()
     }
 
-    fn update_data(&mut self) {
-        self.data_vec = TuiState::<'a>::get_data();
-        self.resort_data();
+    fn get_data_group_artist() -> Vec<SongDataPlays> {
+        let db: Connection = Connection::open(FILE_NAME).unwrap();
+
+        let mut statement = db.prepare("SELECT artist, SUM(plays) FROM song_data JOIN song_plays ON song_data.id = song_plays.id GROUP BY artist ORDER BY SUM(plays) DESC").unwrap();
+        let rows= statement.query_map((), |row| {
+            let song_data = SongData {
+                artist: row.get(0)?,
+                album: "".parse().unwrap(),
+                title: "".parse().unwrap(),
+            };
+            Ok(SongDataPlays {
+                song_data,
+                plays: row.get::<usize, u32>(1)?.to_string(),
+                plays_u32: row.get(1)?,
+            })
+        }).unwrap();
+
+        rows.map(|r| {r.unwrap()}).collect()
     }
 
-    fn resort_data(&mut self) {
-        self.data_vec.sort_by(|a, b| {
-            match self.sorting {
-                Sorting::Artist => a.artist().cmp(b.artist()),
-                Sorting::Album => a.album().cmp(b.album()),
-                Sorting::Title => a.title().cmp(b.title()),
-                // reversed to be descending
-                Sorting::Plays => b.plays().cmp(a.plays()),
-            }
-        });
+    fn get_data_group_album() -> Vec<SongDataPlays> {
+        let db: Connection = Connection::open(FILE_NAME).unwrap();
+
+        let mut statement = db.prepare("SELECT album, SUM(plays) FROM song_data JOIN song_plays ON song_data.id = song_plays.id GROUP BY album ORDER BY SUM(plays) DESC").unwrap();
+        let rows= statement.query_map((), |row| {
+            let song_data = SongData {
+                artist: "".parse().unwrap(),
+                album: row.get(0).unwrap(),
+                title: "".parse().unwrap(),
+            };
+            Ok(SongDataPlays {
+                song_data,
+                plays: row.get::<usize, u32>(1)?.to_string(),
+                plays_u32: row.get(1)?,
+            })
+        }).unwrap();
+
+        rows.map(|r| {r.unwrap()}).collect()
     }
+
+    fn update_data(&mut self) {
+        self.data_vec = match self.grouping {
+            Grouping::Date => TuiState::get_data_group_date(),
+            Grouping::Artist => TuiState::get_data_group_artist(),
+            Grouping::Album => TuiState::get_data_group_album()
+        }
+    }
+
+    // fn resort_data(&mut self) {
+    //     self.data_vec.sort_by(|a, b| {
+    //         match self.sorting {
+    //             Sorting::Artist => a.artist().cmp(b.artist()),
+    //             Sorting::Album => a.album().cmp(b.album()),
+    //             Sorting::Title => a.title().cmp(b.title()),
+    //             // reversed to be descending
+    //             Sorting::Plays => b.plays().cmp(a.plays()),
+    //         }
+    //     });
+    // }
 
     fn render_frame(&mut self, frame: &mut Frame) {
         let [main_area, footer_area] = Layout::vertical([
@@ -151,17 +211,16 @@ impl<'a> TuiState<'a> {
     }
 
     fn render_sidebar(&mut self, frame: &mut Frame, area: Rect) {
-        let collapsed_top_right_border_set = symbols::border::Set {
-            // top_left: symbols::line::NORMAL.vertical_right,
+        let collapsed_top_right_border_set = border::Set {
             top_right: symbols::line::NORMAL.horizontal_down,
-            ..symbols::border::PLAIN
+            ..border::PLAIN
         };
 
-        let collapsed_top_and_right_border_set = symbols::border::Set {
+        let collapsed_top_and_right_border_set = border::Set {
             top_left: symbols::line::NORMAL.vertical_right,
             top_right: symbols::line::NORMAL.vertical_left,
             bottom_right: symbols::line::NORMAL.horizontal_up,
-            ..symbols::border::PLAIN
+            ..border::PLAIN
         };
 
         let [sort_area, group_area] = Layout::vertical([
@@ -186,7 +245,7 @@ impl<'a> TuiState<'a> {
             .border_set(collapsed_top_and_right_border_set)
             .padding(Padding::uniform(1));
 
-        let group_list = List::new(["Date", "Album", "Artist"])
+        let group_list = List::new(["Date", "Artist", "Album"])
             .block(group_block)
             .highlight_style(SELECTED_STYLE);
 
@@ -195,47 +254,100 @@ impl<'a> TuiState<'a> {
     }
 
     // https://github.com/ratatui/ratatui/issues/1004
-
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
-        let rows: Vec<Row> = self.data_vec.iter()
-            .map(|data| {
-                data.ref_array()
-                    .into_iter()
-                    .map(|string| Cell::from(Text::from(format!("{string}"))))
-                    .collect::<Row>()
-                    .height(1)
-            })
-            .collect();
-
-        let widths = [
-            Constraint::Fill(1),
-            Constraint::Fill(3),
-            Constraint::Fill(3),
-            Constraint::Max(7)
-        ];
-
-        let header = self.header
-            .into_iter()
-            .map(Cell::from)
-            .collect::<Row>()
-            .red()
-            .bold()
-            .height(1);
-
-        // let info = Title::from(Line::from(" (↑/↓) Scroll | (Home/End) Jump | (←/→) Sort | (r) Refresh | (Esc/q) Quit "));
-
         let block = Block::bordered()
             .title(Line::raw(" Song Table ").centered())
-            // .title(title.alignment(Alignment::Center))
-            // .title(info.alignment(Alignment::Center).position(Position::Bottom))
             .padding(Padding::new(1, 3, 0, 0))
-            // .border_set(border::PLAIN)
             .borders(Borders::TOP | Borders::BOTTOM | Borders::RIGHT);
 
-        let table = Table::new(rows, widths)
-            .header(header)
-            .block(block)
-            .highlight_style(SELECTED_STYLE);
+        let table = match self.grouping {
+            Grouping::Date => {
+                let rows: Vec<Row> = self.data_vec.iter()
+                    .map(|data| {
+                        data.ref_array_date()
+                            .into_iter()
+                            .map(|string| Cell::from(Text::from(format!("{string}"))))
+                            .collect::<Row>()
+                            .height(1)
+                    })
+                    .collect();
+
+                let widths = [
+                    Constraint::Fill(1),
+                    Constraint::Fill(3),
+                    Constraint::Fill(3),
+                    Constraint::Max(7)
+                ];
+
+                let header = DATE_HEADER
+                    .into_iter()
+                    .map(Cell::from)
+                    .collect::<Row>()
+                    .red()
+                    .bold();
+
+                Table::new(rows, widths)
+                    .block(block)
+                    .header(header)
+                    .highlight_style(SELECTED_STYLE)
+            },
+            Grouping::Artist => {
+                let rows: Vec<Row> = self.data_vec.iter()
+                    .map(|data| {
+                        data.ref_array_artist()
+                            .into_iter()
+                            .map(|string| Cell::from(Text::from(format!("{string}"))))
+                            .collect::<Row>()
+                            .height(1)
+                    })
+                    .collect();
+
+                let widths = [
+                    Constraint::Fill(1),
+                    Constraint::Max(7)
+                ];
+
+                let header = ARTIST_HEADER
+                    .into_iter()
+                    .map(Cell::from)
+                    .collect::<Row>()
+                    .red()
+                    .bold();
+
+                Table::new(rows, widths)
+                    .block(block)
+                    .header(header)
+                    .highlight_style(SELECTED_STYLE)
+            },
+            Grouping::Album => {
+                let rows: Vec<Row> = self.data_vec.iter()
+                    .map(|data| {
+                        data.ref_array_album()
+                            .into_iter()
+                            .map(|string| Cell::from(Text::from(format!("{string}"))))
+                            .collect::<Row>()
+                            .height(1)
+                    })
+                    .collect();
+
+                let widths = [
+                    Constraint::Fill(1),
+                    Constraint::Max(7)
+                ];
+
+                let header = ALBUM_HEADER
+                    .into_iter()
+                    .map(Cell::from)
+                    .collect::<Row>()
+                    .red()
+                    .bold();
+
+                Table::new(rows, widths)
+                    .block(block)
+                    .header(header)
+                    .highlight_style(SELECTED_STYLE)
+            }
+        };
 
         frame.render_stateful_widget(table, area, &mut self.table_state);
     }
@@ -260,7 +372,7 @@ impl<'a> TuiState<'a> {
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
-        let info_footer = Paragraph::new(Line::from(" (↑/↓) Scroll | (Home/End) Jump | (←/→) Sort | (r) Refresh | (Esc/q) Quit "))
+        let info_footer = Paragraph::new(Line::from(" (↑/↓) Scroll | (Page Up/Down) Jump | (←/→) Grouping | (r) Refresh | (Esc/q) Quit "))
             .centered()
             .block(Block::bordered()
                 .title(Title::from(" Mpressed ".red().bold())
@@ -282,10 +394,10 @@ impl<'a> TuiState<'a> {
         match key_event.code {
             KeyCode::Up => self.up(),
             KeyCode::Down => self.down(),
-            KeyCode::Home => self.home(),
-            KeyCode::End => self.end(),
-            KeyCode::Left => self.sort_prev(),
-            KeyCode::Right => self.sort_next(),
+            KeyCode::PageUp => self.start(),
+            KeyCode::PageDown => self.end(),
+            KeyCode::Left => self.grouping_prev(),
+            KeyCode::Right => self.grouping_next(),
             KeyCode::Char('r') => self.update_data(),
             KeyCode::Esc | KeyCode::Char('q') => self.exit(),
             _ => {}
@@ -306,7 +418,7 @@ impl<'a> TuiState<'a> {
         self.scroll_state.next();
     }
 
-    fn home(&mut self) {
+    fn start(&mut self) {
         self.table_state.select_first();
         self.scroll_state.first();
     }
@@ -316,50 +428,19 @@ impl<'a> TuiState<'a> {
         self.scroll_state.last();
     }
 
-    fn sort_prev(&mut self) {
-        self.header = match self.sorting {
-            Sorting::Artist => {
-                self.sorting = Sorting::Plays;
-                ["<Artist>", "<Album>", "<Title>", ">Plays<"]
-            } ,
-            Sorting::Album => {
-                self.sorting = Sorting::Artist;
-                [">Artist<", "<Album>", "<Title>", "<Plays>"]
-            } ,
-            Sorting::Title => {
-                self.sorting = Sorting::Album;
-                ["<Artist>", ">Album<", "<Title>", "<Plays>"]
-            } ,
-            Sorting::Plays => {
-                self.sorting = Sorting::Title;
-                ["<Artist>", "<Album>", ">Title<", "<Plays>"]
-            } ,
-        };
-        self.resort_data();
+    fn grouping_prev(&mut self) {
+        self.grouping.prev();
+        self.grouping_state.select_previous();
+        self.table_state.select_first();
+        self.update_data();
     }
 
-    fn sort_next(&mut self) {
-        self.header = match self.sorting {
-            Sorting::Artist => {
-                self.sorting = Sorting::Album;
-                ["<Artist>", ">Album<", "<Title>", "<Plays>"]
-            } ,
-            Sorting::Album => {
-                self.sorting = Sorting::Title;
-                ["<Artist>", "<Album>", ">Title<", "<Plays>"]
-            } ,
-            Sorting::Title => {
-                self.sorting = Sorting::Plays;
-                ["<Artist>", "<Album>", "<Title>", ">Plays<"]
-            } ,
-            Sorting::Plays => {
-                self.sorting = Sorting::Artist;
-                [">Artist<", "<Album>", "<Title>", "<Plays>"]
-            } ,
-        };
-        self.resort_data();
+    fn grouping_next(&mut self) {
+        self.grouping.next();
+        self.grouping_state.select_next();
+        self.table_state.select_first();
+        self.update_data();
     }
-
 
 }
 

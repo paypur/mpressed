@@ -1,5 +1,5 @@
 pub const FILE_NAME: &str = "mpressed.db";
-pub const MIN_PLAYTIME: u8 = 10;
+pub const MIN_PLAYTIME: i64 = 10;
 
 #[derive(Debug, Default)]
 pub struct SongData {
@@ -16,8 +16,16 @@ pub struct SongDataPlays {
 }
 
 impl SongDataPlays {
-    pub const fn ref_array(&self) -> [&String; 4] {
-        [&self.song_data.artist, &self.song_data.album, &self.song_data.title, &self.plays]
+    pub fn ref_array_date(&self) -> [&str; 4] {
+        [self.artist(), self.album(), self.title(), self.plays()]
+    }
+
+    pub fn ref_array_artist(&self) -> [&str; 2] {
+        [self.artist(), self.plays()]
+    }
+
+    pub fn ref_array_album(&self) -> [&str; 2] {
+        [&self.album(), self.plays()]
     }
 
     pub fn artist(&self) -> &str {

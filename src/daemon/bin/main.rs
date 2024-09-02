@@ -1,3 +1,5 @@
+use std::thread::sleep;
+use std::time::Duration;
 use chrono::Local;
 use mpris::{Event, Metadata, Player, PlayerFinder};
 use rusqlite::{Connection};
@@ -35,19 +37,16 @@ fn player_loop(db: &Connection) {
     let player_finder: PlayerFinder = PlayerFinder::new().expect("Could not connect to D-Bus");
 
     loop {
-         // TODO: add delay
-
         for identity in IDENTITIES {
             if player_finder.find_by_name(identity).is_ok() {
-                let mut player = player_finder.find_by_name(identity).unwrap();
-
-                println!("Showing event stream for player {}", player.identity());
-                event_handler(db, &mut player);
+                println!("Showing event stream for player {}", identity);
+                event_handler(db, &mut player_finder.find_by_name(identity).unwrap());
                 println!("Event stream ended.");
-
                 break;
             }
         }
+
+        sleep(Duration::from_secs(1));
     }
 }
 
@@ -55,6 +54,7 @@ fn event_handler(db: &Connection, player: &mut Player) {
     let mut track_last_changed: i64 = 0;
     let mut song_option: Option<SongData> = None;
 
+    // TODO: data from a web browser might be ["", "", ""]
     let data_result = player.get_metadata();
     if data_result.is_ok() {
         song_option = get_song_data(data_result.unwrap());

@@ -63,7 +63,7 @@ fn event_handler(db: &Connection, player: &mut Player) {
 
     for event_result in player.events().expect("Could not start event stream") {
         if event_result.is_err() {
-            println!("D-Bus error: {}. Aborting.", event_result.unwrap_err());
+            println!("D-Bus error: {}. Aborting.", event_result.is_err());
             break;
         }
 
@@ -74,7 +74,6 @@ fn event_handler(db: &Connection, player: &mut Player) {
             Event::TrackChanged(data) => {
                 if song_option.is_some() {
                     let song = song_option.unwrap();
-
                     if current_time - track_last_changed > MIN_PLAYTIME {
                     // if player.get_position().expect("").ge(MIN_PLAYTIME);
                         write(db, &song, &current_date);

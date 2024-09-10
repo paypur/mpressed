@@ -20,21 +20,23 @@ struct SongDataNone {
     artist: String,
     album: String,
     title: String,
-    plays: String,
+    plays_string: String,
+    plays: u32
 }
 
 impl SongDataNone {
-    pub fn new(artist: String, album: String, title: String, plays: String) -> Self {
+    pub fn new(artist: String, album: String, title: String, plays: u32) -> Self {
         Self {
             artist,
             album,
             title,
+            plays_string: plays.to_string(),
             plays,
         }
     }
 
     pub fn ref_array(&self) -> [&str; 4] {
-        [&self.artist, &self.album, &self.title, &self.plays]
+        [&self.artist, &self.album, &self.title, &self.plays_string]
     }
 
     pub fn artist(&self) -> &str {
@@ -49,65 +51,75 @@ impl SongDataNone {
         &self.title
     }
 
-    pub fn plays(&self) -> &str {
-        &self.plays
+    pub fn plays_string(&self) -> &str {
+        &self.plays_string
+    }
+
+    pub fn plays(&self) -> u32 {
+        self.plays
     }
 }
 
 #[derive(Debug, Default)]
 struct SongDataDate {
     date: String,
-    plays: String,
+    plays_string: String,
+    plays: u32
 }
 
 impl SongDataDate {
-    pub fn new(date: String, plays: String) -> Self {
+    pub fn new(date: String, plays: u32) -> Self {
         Self {
             date,
+            plays_string: plays.to_string(),
             plays,
         }
     }
 
     pub fn ref_array(&self) -> [&str; 2] {
-        [&self.date, &self.plays]
+        [&self.date, &self.plays_string]
     }
 }
 
 #[derive(Debug, Default)]
 struct SongDataArtist {
     artist: String,
-    plays: String,
+    plays_string: String,
+    plays: u32
 }
 
 impl SongDataArtist {
-    pub fn new(artist: String, plays: String) -> Self {
+    pub fn new(artist: String, plays: u32) -> Self {
         Self {
             artist,
+            plays_string: plays.to_string(),
             plays,
         }
     }
 
     pub fn ref_array(&self) -> [&str; 2] {
-        [&self.artist, &self.plays]
+        [&self.artist, &self.plays_string]
     }
 }
 
 #[derive(Debug, Default)]
 struct SongDataAlbum {
     album: String,
-    plays: String,
+    plays_string: String,
+    plays: u32
 }
 
 impl SongDataAlbum {
-    pub fn new(album: String, plays: String) -> Self {
+    pub fn new(album: String, plays: u32) -> Self {
         Self {
             album,
-            plays,
+            plays_string: plays.to_string(),
+            plays
         }
     }
 
     pub fn ref_array(&self) -> [&str; 2] {
-        [&self.album, &self.plays]
+        [&self.album, &self.plays_string]
     }
 }
 
@@ -251,7 +263,7 @@ impl TuiState {
             .unwrap()
             .prepare("SELECT artist, album, title, SUM(plays) FROM song_data JOIN song_plays ON song_data.id = song_plays.id GROUP BY song_data.id ORDER BY SUM(plays) DESC")
             .unwrap()
-            .query_map((), |row| Ok(SongDataNone::new(row.get(0)?, row.get(1)?, row.get(2)?, row.get::<usize, u32>(3)?.to_string())))
+            .query_map((), |row| Ok(SongDataNone::new(row.get(0)?, row.get(1)?, row.get(2)?, row.get::<usize, u32>(3)?)))
             .unwrap()
             .map(|r| r.unwrap())
             .collect()
@@ -262,7 +274,7 @@ impl TuiState {
             .unwrap()
             .prepare("SELECT date, SUM(plays) FROM song_plays GROUP BY date ORDER BY SUM(plays) DESC")
             .unwrap()
-            .query_map((), |row| Ok(SongDataDate::new(row.get(0)?, row.get::<usize, u32>(1)?.to_string())))
+            .query_map((), |row| Ok(SongDataDate::new(row.get(0)?, row.get::<usize, u32>(1)?)))
             .unwrap()
             .map(|r| r.unwrap())
             .collect()
@@ -273,7 +285,7 @@ impl TuiState {
             .unwrap()
             .prepare("SELECT artist, SUM(plays) FROM song_data JOIN song_plays ON song_data.id = song_plays.id GROUP BY artist ORDER BY SUM(plays) DESC")
             .unwrap()
-            .query_map((), |row| Ok(SongDataArtist::new(row.get(0)?, row.get::<usize, u32>(1)?.to_string())))
+            .query_map((), |row| Ok(SongDataArtist::new(row.get(0)?, row.get::<usize, u32>(1)?)))
             .unwrap()
             .map(|r| r.unwrap())
             .collect()
@@ -284,7 +296,7 @@ impl TuiState {
             .unwrap()
             .prepare("SELECT album, SUM(plays) FROM song_data JOIN song_plays ON song_data.id = song_plays.id GROUP BY album ORDER BY SUM(plays) DESC")
             .unwrap()
-            .query_map((), |row| Ok(SongDataAlbum::new(row.get(0)?, row.get::<usize, u32>(1)?.to_string())))
+            .query_map((), |row| Ok(SongDataAlbum::new(row.get(0)?, row.get::<usize, u32>(1)?)))
             .unwrap()
             .map(|r| r.unwrap())
             .collect()
@@ -298,7 +310,7 @@ impl TuiState {
                     Sort::Artist => a.artist().cmp(b.artist()),
                     Sort::Album => a.album().cmp(b.album()),
                     Sort::Title => a.title().cmp(b.title()),
-                    Sort::Plays => a.plays().cmp(b.plays()),
+                    Sort::Plays => a.plays().cmp(&b.plays()),
                 };
                 if sort_direction.1 { order.reverse() } else { order }
             })
@@ -687,7 +699,7 @@ impl TuiState {
 
     fn sort_select(&mut self) {
         // subtract because sorting_priority reversed compared to sorting_state
-        let s = self.sorting_priority.len() - 1 - self.sorting_state.selected().unwrap();
+        let s = self.sorting_priority.len() - self.sorting_state.selected().unwrap() - 1;
         let temp: SortDirection = self.sorting_priority.remove(s);
         self.sorting_priority.push(temp);
         self.data_sort();

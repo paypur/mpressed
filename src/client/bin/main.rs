@@ -6,13 +6,14 @@ use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlter
 use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::prelude::Color;
 use ratatui::style::{Modifier, Style, Stylize};
-use ratatui::text::{Line, Text};
+use ratatui::text::{Line, Text, ToSpan};
 use ratatui::widgets::block::Title;
-use ratatui::widgets::{ Block, BorderType, Cell, List, ListState, Padding, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState};
-use ratatui::{crossterm::event::{self, KeyCode}, Frame, Terminal};
+use ratatui::widgets::{Axis, Block, BorderType, Cell, Chart, Dataset, GraphType, LegendPosition, List, ListState, Padding, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState};
+use ratatui::{crossterm::event::{self, KeyCode}, symbols, Frame, Terminal};
 use rusqlite::Connection;
 use std::io;
 use std::io::Result;
+use chrono::{DateTime, Utc};
 use strum::Display;
 
 #[derive(Debug, Default)]
@@ -60,7 +61,7 @@ impl SongDataNone {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct SongDataDate {
     date: String,
     plays_string: String,
@@ -155,17 +156,17 @@ enum Group {
 impl SelectedTab {
     pub fn prev(&mut self) {
         *self = match self {
-            SelectedTab::Table => SelectedTab::Group,
-            SelectedTab::Sort => SelectedTab::Table,
-            SelectedTab::Group => SelectedTab::Sort,
+            SelectedTab::Table => SelectedTab::Sort,
+            SelectedTab::Group => SelectedTab::Table,
+            SelectedTab::Sort => SelectedTab::Group,
         }
     }
 
     pub fn next(&mut self) {
         *self = match self {
-            SelectedTab::Table => SelectedTab::Sort,
-            SelectedTab::Sort => SelectedTab::Group,
-            SelectedTab::Group => SelectedTab::Table,
+            SelectedTab::Table => SelectedTab::Group,
+            SelectedTab::Group => SelectedTab::Sort,
+            SelectedTab::Sort => SelectedTab::Table,
         }
     }
 }
@@ -196,12 +197,12 @@ struct TuiState {
     data_vec_date: Vec<SongDataDate>,
     data_vec_artist: Vec<SongDataArtist>,
     data_vec_album: Vec<SongDataAlbum>,
+    sort_priority: Vec<SortDirection>,
+    group: Group,
+    sort: Sort,
     selected_tab: SelectedTab,
-    sorting_priority: Vec<SortDirection>,
-    sorting: Sort,
-    grouping: Group,
-    sorting_state: ListState,
-    grouping_state: ListState,
+    group_state: ListState,
+    sort_state: ListState,
     table_state: TableState,
     scroll_state: ScrollbarState,
     exit: bool,
@@ -226,11 +227,11 @@ impl TuiState {
             data_vec_artist,
             data_vec_album,
             selected_tab: SelectedTab::default(),
-            sorting_priority: vec!(SortDirection(Sort::Title, false), SortDirection(Sort::Album, false), SortDirection(Sort::Artist, false), SortDirection(Sort::Plays, true)),
-            sorting: Sort::default(),
-            grouping: Group::default(),
-            sorting_state: ListState::default().with_selected(Some(0)),
-            grouping_state: ListState::default().with_selected(Some(0)),
+            sort_priority: vec!(SortDirection(Sort::Title, false), SortDirection(Sort::Album, false), SortDirection(Sort::Artist, false), SortDirection(Sort::Plays, true)),
+            sort: Sort::default(),
+            group: Group::default(),
+            sort_state: ListState::default().with_selected(Some(0)),
+            group_state: ListState::default().with_selected(Some(0)),
             table_state: TableState::default().with_selected(0),
             scroll_state: ScrollbarState::new(length),
             exit: false,
@@ -303,7 +304,7 @@ impl TuiState {
     }
 
     fn data_sort(&mut self) {
-        for sort_direction in &self.sorting_priority {
+        for sort_direction in &self.sort_priority {
             // TODO: change
             self.data_vec_none.sort_by(|a, b| {
                 let mut order = match sort_direction.0  {
@@ -319,19 +320,19 @@ impl TuiState {
 
     fn update_data(&mut self) {
         self.table_state.select_first();
-        match self.grouping {
+        match self.group {
             Group::None => {
                 self.data_vec_none = TuiState::get_data_vec_none();
                 self.scroll_state = ScrollbarState::new(self.data_vec_none.len());
-            } ,
+            }
             Group::Date => {
                 self.data_vec_date = TuiState::get_data_vec_date();
                 self.scroll_state = ScrollbarState::new(self.data_vec_date.len());
-            } ,
+            }
             Group::Artist => {
                 self.data_vec_artist = TuiState::get_data_vec_artist();
                 self.scroll_state = ScrollbarState::new(self.data_vec_artist.len());
-            } ,
+            }
             Group::Album => {
                 self.data_vec_album = TuiState::get_data_vec_album();
                 self.scroll_state = ScrollbarState::new(self.data_vec_album.len());
@@ -351,55 +352,39 @@ impl TuiState {
             Constraint::Fill(1)
         ]).areas(main_area);
 
-        let [chart_area, table_area_2] = Layout::horizontal([
-            Constraint::Fill(1),
-            Constraint::Fill(1)
-        ]).areas(table_area);
+        match self.group {
+            // Group::None => {}
+            Group::Date => {
+                let [chart_area, table_area_small] = Layout::horizontal([
+                    Constraint::Fill(1),
+                    Constraint::Fill(1)
+                ]).areas(table_area);
 
-        // self.render_line_chart(frame, chart_area);
+                self.render_date_plays_chart(frame, chart_area);
+                self.render_sidebar(frame, sidebar_area);
+                self.render_table(frame, table_area_small);
+                self.render_footer(frame, footer_area);
+            }
+            // Group::Artist => {}
+            // Group::Album => {}
+            _ => {
+                self.render_sidebar(frame, sidebar_area);
+                self.render_table(frame, table_area);
+                self.render_footer(frame, footer_area);
+            }
+        }
 
-        self.render_sidebar(frame, sidebar_area);
-        self.render_table(frame, table_area);
-        self.render_scrollbar(frame, table_area);
-
-        self.render_footer(frame, footer_area);
     }
 
     fn render_sidebar(&mut self, frame: &mut Frame, area: Rect) {
-        let [sort_area, group_area] = Layout::vertical([
+        let [group_area, sort_area] = Layout::vertical([
             Constraint::Fill(1),
             Constraint::Fill(1)
         ]).areas(area);
 
-        let sort_border_style = match self.selected_tab {
-            SelectedTab::Sort => Style::from(Color::Red),
-            SelectedTab::Table | SelectedTab::Group => Style::default(),
-        };
-
-        let sort_block = Block::bordered()
-            .title(Title::from(" Sorting "))
-            .border_style(sort_border_style)
-            .padding(Padding::uniform(1));
-
-        let sort_vector: Vec<String> = self.sorting_priority.iter()
-            .rev()
-            .enumerate()
-            .map(|(i, s)| {
-                let mut prefix = format!("{}. ", i+1).to_owned();
-                prefix.push_str(&s.0.to_string());
-                prefix
-            })
-            .collect();
-
-        let sort_list = List::new(sort_vector)
-            .block(sort_block)
-            .highlight_style(SELECTED_STYLE);
-
-        frame.render_stateful_widget(sort_list, sort_area, &mut self.sorting_state);
-
         let grouping_border_style = match self.selected_tab {
             SelectedTab::Group => Style::from(Color::Red),
-            SelectedTab::Table | SelectedTab::Sort => Style::default(),
+            _ => Style::default(),
         };
 
         let group_block = Block::bordered()
@@ -409,16 +394,43 @@ impl TuiState {
 
         let group_list = List::new(["None", "Date", "Artist", "Album"])
             .block(group_block)
+            .highlight_symbol("> ")
             .highlight_style(SELECTED_STYLE);
 
-        frame.render_stateful_widget(group_list, group_area, &mut self.grouping_state);
+        frame.render_stateful_widget(group_list, group_area, &mut self.group_state);
+
+        let sort_border_style = match self.selected_tab {
+            SelectedTab::Sort => Style::from(Color::Red),
+            _ => Style::default(),
+        };
+
+        let sort_block = Block::bordered()
+            .title(Title::from(" Sorting "))
+            .border_style(sort_border_style)
+            .padding(Padding::uniform(1));
+
+        let sort_vector = self.sort_priority.iter()
+            .rev()
+            .enumerate()
+            .map(|(i, sort)| {
+                let mut prefix = format!("{}. ", i+1).to_owned();
+                prefix.push_str(&sort.0.to_string());
+                prefix
+            })
+            .collect::<Vec<String>>();
+
+        let sort_list = List::new(sort_vector)
+            .block(sort_block)
+            .highlight_style(SELECTED_STYLE);
+
+        frame.render_stateful_widget(sort_list, sort_area, &mut self.sort_state);
     }
 
     // https://github.com/ratatui/ratatui/issues/1004
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
         let border_style = match self.selected_tab {
             SelectedTab::Table => Style::from(Color::Red),
-            SelectedTab::Sort | SelectedTab::Group => Style::default(),
+            _ => Style::default(),
         };
 
         let block = Block::bordered()
@@ -426,7 +438,7 @@ impl TuiState {
             .border_style(border_style)
             .padding(Padding::new(1, 3, 0, 0));
 
-        let table = match self.grouping {
+        let table = match self.group {
             Group::None => {
                 let rows: Vec<Row> = self.data_vec_none.iter()
                     .map(|data| {
@@ -540,56 +552,7 @@ impl TuiState {
         };
 
         frame.render_stateful_widget(table, area, &mut self.table_state);
-    }
 
-    // fn render_line_chart(&self, frame: &mut Frame, area: Rect) {
-    //
-    //     let something = self.data_vec_date.iter()
-    //         .map(|song| {
-    //             let mut s =  song.date.clone();
-    //             s.push_str("T00:00:00Z");
-    //             (s.parse::<DateTime<Utc>>().unwrap().timestamp() as f64, song.plays.parse::<f64>().unwrap())
-    //         });
-    //
-    //     let datasets = vec![Dataset::default()
-    //         .name("Line from only 2 points".italic())
-    //         .marker(symbols::Marker::Braille)
-    //         .style(Style::default().fg(Color::Yellow))
-    //         .graph_type(GraphType::Line)
-    //         .data(&[
-    //             (1., 1.), (4., 4.)
-    //         ])];
-    //
-    //     let chart = Chart::new(datasets)
-    //         .block(
-    //             Block::bordered()
-    //                 .title(
-    //                     Title::default()
-    //                         .content("Line chart".cyan().bold())
-    //                         .alignment(Alignment::Center),
-    //                 ),
-    //         )
-    //         .x_axis(
-    //             Axis::default()
-    //                 .title("X Axis")
-    //                 .style(Style::default().gray())
-    //                 .bounds([0.0, 5.0])
-    //                 .labels(["0".bold(), "2.5".into(), "5.0".bold()]),
-    //         )
-    //         .y_axis(
-    //             Axis::default()
-    //                 .title("Y Axis")
-    //                 .style(Style::default().gray())
-    //                 .bounds([0.0, 5.0])
-    //                 .labels(["0".bold(), "2.5".into(), "5.0".bold()]),
-    //         )
-    //         .legend_position(Some(LegendPosition::TopLeft))
-    //         .hidden_legend_constraints((Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)));
-    //
-    //     frame.render_widget(chart, area);
-    // }
-
-    fn render_scrollbar(&mut self, frame: &mut Frame, area: Rect) {
         let scrollbar = Scrollbar::default()
             .orientation(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
@@ -600,12 +563,69 @@ impl TuiState {
 
         frame.render_stateful_widget(
             scrollbar,
-            area.inner(Margin {
-                vertical: 1,
-                horizontal: 2,
-            }),
+            area.inner(Margin {vertical: 1, horizontal: 2}),
             &mut self.scroll_state,
         );
+    }
+
+    fn render_date_plays_chart(&self, frame: &mut Frame, area: Rect) {
+        let mut cloned = self.data_vec_date.clone();
+        cloned.sort_by(|a, b| a.date.cmp(&b.date));
+
+        let min_date = cloned[0].date.clone();
+        let max_date = cloned[cloned.len() - 1].date.clone();
+
+        let data = cloned.iter()
+            .map(|song| {
+                let mut s =  song.date.clone();
+                s.push_str("T00:00:00Z");
+                (s.parse::<DateTime<Utc>>().unwrap().timestamp() as f64, song.plays as f64)
+            })
+            .collect::<Vec<(f64, f64)>>();
+
+        let min_time = data[0].0;
+        let max_time = data[data.len() - 1].0;
+
+        let max_plays = data.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).unwrap().1;
+
+        let datasets = vec![
+            Dataset::default()
+                .marker(symbols::Marker::Braille)
+                .style(Style::from(Color::Red))
+                .graph_type(GraphType::Line)
+                .data(&data)
+        ];
+
+        let chart = Chart::new(datasets)
+            .block(
+                Block::bordered()
+                    .title(
+                        Title::default()
+                            .content(" Line chart ")
+                            .alignment(Alignment::Center),
+                    )
+                    .padding(
+                        Padding::uniform(1)
+                    )
+            )
+            .x_axis(
+                Axis::default()
+                    .title("Date")
+                    .style(Style::default().gray())
+                    .bounds([min_time, max_time])
+                    .labels([min_date, max_date]),
+            )
+            .y_axis(
+                Axis::default()
+                    .title("Plays")
+                    .style(Style::default().gray())
+                    .bounds([0.0, max_plays])
+                    .labels(["0".bold(), max_plays.to_span()]),
+            )
+            .legend_position(Some(LegendPosition::TopLeft))
+            .hidden_legend_constraints((Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)));
+
+        frame.render_widget(chart, area);
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
@@ -690,30 +710,30 @@ impl TuiState {
     }
 
     fn sort_prev(&mut self) {
-        self.sorting_state.select_previous();
+        self.sort_state.select_previous();
     }
 
     fn sort_next(&mut self) {
-        self.sorting_state.select_next();
+        self.sort_state.select_next();
     }
 
     fn sort_select(&mut self) {
         // subtract because sorting_priority reversed compared to sorting_state
-        let s = self.sorting_priority.len() - self.sorting_state.selected().unwrap() - 1;
-        let temp: SortDirection = self.sorting_priority.remove(s);
-        self.sorting_priority.push(temp);
+        let s = self.sort_priority.len() - self.sort_state.selected().unwrap() - 1;
+        let temp: SortDirection = self.sort_priority.remove(s);
+        self.sort_priority.push(temp);
         self.data_sort();
     }
 
     fn group_prev(&mut self) {
-        self.grouping.prev();
-        self.grouping_state.select_previous();
+        self.group.prev();
+        self.group_state.select_previous();
         self.table_state.select_first();
     }
 
     fn group_next(&mut self) {
-        self.grouping.next();
-        self.grouping_state.select_next();
+        self.group.next();
+        self.group_state.select_next();
         self.table_state.select_first();
     }
 

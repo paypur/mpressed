@@ -3,17 +3,19 @@ use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::Color;
 use ratatui::style::{Modifier, Style, Stylize};
-use ratatui::text::{Line, Text, ToSpan};
+use ratatui::text::{Line, Span, Text, ToSpan};
 use ratatui::widgets::block::Title;
-use ratatui::widgets::{Axis, Block, BorderType, Cell, Chart, Dataset, GraphType, LegendPosition, List, ListState, Padding, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState};
+use ratatui::widgets::{Axis, BarChart, Block, BorderType, Cell, Chart, Dataset, GraphType, LegendPosition, LineGauge, List, ListState, Padding, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState};
 use ratatui::{crossterm::event::{self, KeyCode}, symbols, Frame, Terminal};
 use rusqlite::Connection;
 use std::io;
 use std::io::Result;
 use chrono::{DateTime, Utc};
+use ratatui::symbols::Marker;
+use ratatui::widgets::canvas::Canvas;
 use strum::Display;
 
 #[derive(Debug, Default)]
@@ -321,29 +323,17 @@ impl TuiState {
     fn update_data(&mut self) {
         self.table_state.select_first();
         match self.group {
-            Group::None => {
-                self.data_vec_none = TuiState::get_data_vec_none();
-                self.scroll_state = ScrollbarState::new(self.data_vec_none.len());
-            }
-            Group::Date => {
-                self.data_vec_date = TuiState::get_data_vec_date();
-                self.scroll_state = ScrollbarState::new(self.data_vec_date.len());
-            }
-            Group::Artist => {
-                self.data_vec_artist = TuiState::get_data_vec_artist();
-                self.scroll_state = ScrollbarState::new(self.data_vec_artist.len());
-            }
-            Group::Album => {
-                self.data_vec_album = TuiState::get_data_vec_album();
-                self.scroll_state = ScrollbarState::new(self.data_vec_album.len());
-            }
+            Group::None => self.data_vec_none = TuiState::get_data_vec_none(),
+            Group::Date => self.data_vec_date = TuiState::get_data_vec_date(),
+            Group::Artist => self.data_vec_artist = TuiState::get_data_vec_artist(),
+            Group::Album => self.data_vec_album = TuiState::get_data_vec_album(),
         };
-
+        self.scroll_reset();
     }
 
     fn render_frame(&mut self, frame: &mut Frame) {
         let [main_area, footer_area] = Layout::vertical([
-            Constraint::Min(1),
+            Constraint::Fill(1),
             Constraint::Length(3),
         ]).areas(frame.area());
 
@@ -355,17 +345,19 @@ impl TuiState {
         match self.group {
             // Group::None => {}
             Group::Date => {
-                let [chart_area, table_area_small] = Layout::horizontal([
+                let [table_area_small, chart_area] = Layout::horizontal([
                     Constraint::Fill(1),
-                    Constraint::Fill(1)
+                    Constraint::Fill(2)
                 ]).areas(table_area);
 
-                self.render_date_plays_chart(frame, chart_area);
                 self.render_sidebar(frame, sidebar_area);
                 self.render_table(frame, table_area_small);
+                self.render_line_chart_date(frame, chart_area);
                 self.render_footer(frame, footer_area);
             }
-            // Group::Artist => {}
+            // Group::Artist => {
+            //
+            // }
             // Group::Album => {}
             _ => {
                 self.render_sidebar(frame, sidebar_area);
@@ -388,7 +380,7 @@ impl TuiState {
         };
 
         let group_block = Block::bordered()
-            .title(Title::from(" Grouping "))
+            .title(Title::from(" Grouping ").alignment(Alignment::Center))
             .border_style(grouping_border_style)
             .padding(Padding::uniform(1));
 
@@ -405,7 +397,7 @@ impl TuiState {
         };
 
         let sort_block = Block::bordered()
-            .title(Title::from(" Sorting "))
+            .title(Title::from(" Sorting ").alignment(Alignment::Center))
             .border_style(sort_border_style)
             .padding(Padding::uniform(1));
 
@@ -438,7 +430,7 @@ impl TuiState {
             .border_style(border_style)
             .padding(Padding::new(1, 3, 0, 0));
 
-        let table = match self.group {
+        match self.group {
             Group::None => {
                 let rows: Vec<Row> = self.data_vec_none.iter()
                     .map(|data| {
@@ -461,12 +453,14 @@ impl TuiState {
                     .map(Cell::from)
                     .collect::<Row>()
                     .red()
-                    .bold();
+                    .height(2);
 
-                Table::new(rows, widths)
+                let table = Table::new(rows, widths)
                     .block(block)
                     .header(header)
-                    .highlight_style(SELECTED_STYLE)
+                    .highlight_style(SELECTED_STYLE);
+
+                frame.render_stateful_widget(table, area, &mut self.table_state);
             },
             Group::Date => {
                 let rows: Vec<Row> = self.data_vec_date.iter()
@@ -488,12 +482,14 @@ impl TuiState {
                     .map(Cell::from)
                     .collect::<Row>()
                     .red()
-                    .bold();
+                    .height(2);
 
-                Table::new(rows, widths)
+                let table = Table::new(rows, widths)
                     .block(block)
                     .header(header)
-                    .highlight_style(SELECTED_STYLE)
+                    .highlight_style(SELECTED_STYLE);
+
+                frame.render_stateful_widget(table, area, &mut self.table_state);
             },
             Group::Artist => {
                 let rows: Vec<Row> = self.data_vec_artist.iter()
@@ -515,12 +511,14 @@ impl TuiState {
                     .map(Cell::from)
                     .collect::<Row>()
                     .red()
-                    .bold();
+                    .height(2);
 
-                Table::new(rows, widths)
+                let table = Table::new(rows, widths)
                     .block(block)
                     .header(header)
-                    .highlight_style(SELECTED_STYLE)
+                    .highlight_style(SELECTED_STYLE);
+
+                frame.render_stateful_widget(table, area, &mut self.table_state);
             },
             Group::Album => {
                 let rows: Vec<Row> = self.data_vec_album.iter()
@@ -542,16 +540,29 @@ impl TuiState {
                     .map(Cell::from)
                     .collect::<Row>()
                     .red()
-                    .bold();
+                    .height(2);
 
-                Table::new(rows, widths)
+                let table = Table::new(rows, widths)
                     .block(block)
                     .header(header)
-                    .highlight_style(SELECTED_STYLE)
+                    .highlight_style(SELECTED_STYLE);
+
+                frame.render_stateful_widget(table, area, &mut self.table_state);
             }
         };
 
-        frame.render_stateful_widget(table, area, &mut self.table_state);
+        let line = LineGauge::default()
+            .style(Style::from(Color::default()))
+            .label("")
+            .ratio(1.);
+
+        let mut small_area = area.clone();
+        small_area.height = 1;
+        small_area.width -= 5;
+        small_area.x += 1;
+        small_area.y += 2;
+
+        frame.render_widget(line, small_area);
 
         let scrollbar = Scrollbar::default()
             .orientation(ScrollbarOrientation::VerticalRight)
@@ -568,7 +579,7 @@ impl TuiState {
         );
     }
 
-    fn render_date_plays_chart(&self, frame: &mut Frame, area: Rect) {
+    fn render_line_chart_date(&self, frame: &mut Frame, area: Rect) {
         let mut cloned = self.data_vec_date.clone();
         cloned.sort_by(|a, b| a.date.cmp(&b.date));
 
@@ -588,15 +599,15 @@ impl TuiState {
 
         let max_plays = data.iter().max_by(|a, b| a.1.partial_cmp(&b.1).unwrap()).unwrap().1;
 
-        let datasets = vec![
+        let dataset = vec![
             Dataset::default()
                 .marker(symbols::Marker::Braille)
-                .style(Style::from(Color::Red))
+                .style(Style::default())
                 .graph_type(GraphType::Line)
                 .data(&data)
         ];
 
-        let chart = Chart::new(datasets)
+        let chart = Chart::new(dataset)
             .block(
                 Block::bordered()
                     .title(
@@ -604,21 +615,19 @@ impl TuiState {
                             .content(" Line chart ")
                             .alignment(Alignment::Center),
                     )
-                    .padding(
-                        Padding::uniform(1)
-                    )
+                    .padding(Padding::uniform(1))
             )
             .x_axis(
                 Axis::default()
                     .title("Date")
-                    .style(Style::default().gray())
+                    .style(Style::default())
                     .bounds([min_time, max_time])
                     .labels([min_date, max_date]),
             )
             .y_axis(
                 Axis::default()
                     .title("Plays")
-                    .style(Style::default().gray())
+                    .style(Style::default())
                     .bounds([0.0, max_plays])
                     .labels(["0".bold(), max_plays.to_span()]),
             )
@@ -628,12 +637,38 @@ impl TuiState {
         frame.render_widget(chart, area);
     }
 
+    fn render_bar_chart(&self, frame: &mut Frame, area: Rect) {
+        // let block = Block::bordered()
+        //     .title(
+        //         Title::default()
+        //             .content(" Bar chart ")
+        //             .alignment(Alignment::Center),
+        //     )
+        //     .padding(Padding::uniform(1));
+
+        let data = self.data_vec_artist.iter()
+            .map(|song| (song.artist.as_str(), song.plays as u64))
+            .collect::<Vec<(&str, u64)>>();
+
+        let bar_chart = BarChart::default()
+            // .block(block)
+            .bar_width(1)
+            .bar_gap(0)
+            // .bar_style(Style::from(Color::Red))
+            .direction(Direction::Horizontal)
+            .data(&data);
+
+        frame.render_widget(bar_chart, area);
+    }
+
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
         let info_footer = Paragraph::new(Line::from("(Esc/q) Quit | (Tab) Change Tab | (↑/↓) Scroll | (Page Up/Down) Jump | (r) Refresh"))
             .centered()
-            .block(Block::bordered()
-                .title(Title::from(" Mpressed ".red().bold()).alignment(Alignment::Center))
-                .border_type(BorderType::Double));
+            .block(
+                Block::bordered()
+                    .title(Title::from(" Mpressed ".red().bold()).alignment(Alignment::Center))
+                    .border_type(BorderType::Double)
+            );
 
         frame.render_widget(info_footer, area);
     }
@@ -718,7 +753,7 @@ impl TuiState {
     }
 
     fn sort_select(&mut self) {
-        // subtract because sorting_priority reversed compared to sorting_state
+        // subtract because sorting_priority is reversed compared to sorting_state
         let s = self.sort_priority.len() - self.sort_state.selected().unwrap() - 1;
         let temp: SortDirection = self.sort_priority.remove(s);
         self.sort_priority.push(temp);
@@ -729,12 +764,25 @@ impl TuiState {
         self.group.prev();
         self.group_state.select_previous();
         self.table_state.select_first();
+        self.scroll_reset();
     }
 
     fn group_next(&mut self) {
         self.group.next();
         self.group_state.select_next();
         self.table_state.select_first();
+        self.scroll_reset();
+    }
+    
+    fn scroll_reset(&mut self) {
+        self.scroll_state = ScrollbarState::new(
+            match self.group {
+                Group::None => self.data_vec_none.len(),
+                Group::Date => self.data_vec_date.len(),
+                Group::Artist => self.data_vec_artist.len(),
+                Group::Album => self.data_vec_album.len(),
+            }
+        );
     }
 
 }

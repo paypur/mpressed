@@ -1,4 +1,3 @@
-use mpressed::{FILE_NAME};
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event};
 use ratatui::crossterm::execute;
@@ -6,7 +5,7 @@ use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlter
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::Color;
 use ratatui::style::{Modifier, Style, Stylize};
-use ratatui::text::{Line, Span, Text, ToSpan};
+use ratatui::text::{Line, Text, ToSpan};
 use ratatui::widgets::block::Title;
 use ratatui::widgets::{Axis, BarChart, Block, BorderType, Cell, Chart, Dataset, GraphType, LegendPosition, LineGauge, List, ListState, Padding, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState};
 use ratatui::{crossterm::event::{self, KeyCode}, symbols, Frame, Terminal};
@@ -14,9 +13,8 @@ use rusqlite::Connection;
 use std::io;
 use std::io::Result;
 use chrono::{DateTime, Utc};
-use ratatui::symbols::Marker;
-use ratatui::widgets::canvas::Canvas;
 use strum::Display;
+use mpressed::get_db_path;
 
 #[derive(Debug, Default)]
 struct SongDataNone {
@@ -201,7 +199,6 @@ struct TuiState {
     data_vec_album: Vec<SongDataAlbum>,
     sort_priority: Vec<SortDirection>,
     group: Group,
-    sort: Sort,
     selected_tab: SelectedTab,
     group_state: ListState,
     sort_state: ListState,
@@ -230,7 +227,6 @@ impl TuiState {
             data_vec_album,
             selected_tab: SelectedTab::default(),
             sort_priority: vec!(SortDirection(Sort::Title, false), SortDirection(Sort::Album, false), SortDirection(Sort::Artist, false), SortDirection(Sort::Plays, true)),
-            sort: Sort::default(),
             group: Group::default(),
             sort_state: ListState::default().with_selected(Some(0)),
             group_state: ListState::default().with_selected(Some(0)),
@@ -262,7 +258,7 @@ impl TuiState {
     }
 
     fn get_data_vec_none() -> Vec<SongDataNone> {
-        Connection::open(FILE_NAME)
+        Connection::open(get_db_path())
             .unwrap()
             .prepare("SELECT artist, album, title, SUM(plays) FROM song_data JOIN song_plays ON song_data.id = song_plays.id GROUP BY song_data.id ORDER BY SUM(plays) DESC")
             .unwrap()
@@ -273,7 +269,7 @@ impl TuiState {
     }
 
     fn get_data_vec_date() -> Vec<SongDataDate> {
-        Connection::open(FILE_NAME)
+        Connection::open(get_db_path())
             .unwrap()
             .prepare("SELECT date, SUM(plays) FROM song_plays GROUP BY date ORDER BY SUM(plays) DESC")
             .unwrap()
@@ -284,7 +280,7 @@ impl TuiState {
     }
 
     fn get_data_vec_artist() -> Vec<SongDataArtist> {
-        Connection::open(FILE_NAME)
+        Connection::open(get_db_path())
             .unwrap()
             .prepare("SELECT artist, SUM(plays) FROM song_data JOIN song_plays ON song_data.id = song_plays.id GROUP BY artist ORDER BY SUM(plays) DESC")
             .unwrap()
@@ -295,7 +291,7 @@ impl TuiState {
     }
 
     fn get_data_vec_album() -> Vec<SongDataAlbum> {
-        Connection::open(FILE_NAME)
+        Connection::open(get_db_path())
             .unwrap()
             .prepare("SELECT album, SUM(plays) FROM song_data JOIN song_plays ON song_data.id = song_plays.id GROUP BY album ORDER BY SUM(plays) DESC")
             .unwrap()
@@ -309,7 +305,7 @@ impl TuiState {
         for sort_direction in &self.sort_priority {
             // TODO: change
             self.data_vec_none.sort_by(|a, b| {
-                let mut order = match sort_direction.0  {
+                let order = match sort_direction.0  {
                     Sort::Artist => a.artist().cmp(b.artist()),
                     Sort::Album => a.album().cmp(b.album()),
                     Sort::Title => a.title().cmp(b.title()),
@@ -355,9 +351,7 @@ impl TuiState {
                 self.render_line_chart_date(frame, chart_area);
                 self.render_footer(frame, footer_area);
             }
-            // Group::Artist => {
-            //
-            // }
+            // Group::Artist => {}
             // Group::Album => {}
             _ => {
                 self.render_sidebar(frame, sidebar_area);

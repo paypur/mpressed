@@ -4,7 +4,7 @@ use chrono::Local;
 use log::{debug};
 use mpris::{Metadata, PlaybackStatus, Player, PlayerFinder};
 use rusqlite::{Connection};
-use mpressed::{get_db_path, SongData, MIN_PLAYTIME};
+use mpressed::{get_db_path, SongData, MIN_PLAYTIME_MS};
 
 const IDENTITIES: [&str; 1] = [
     "VLC media player"
@@ -54,8 +54,9 @@ fn player_loop(db: &Connection) {
 }
 
 fn tracker_loop(db: &Connection, player: &mut Player) {
-    let mut song_option: Option<SongData> = Some(get_song_data(&player.get_metadata().unwrap()));
-    let mut song_playtime: u32 = 0;
+    let mut written = false;
+    let mut song_option: Option<SongData> = get_song_data(&player.get_metadata().unwrap());
+    let mut song_playtime: i64 = 0;
     let mut current_date = Local::now().date_naive().to_string();
 
     let mut player_tracker = player.track_progress(1000)
@@ -64,6 +65,7 @@ fn tracker_loop(db: &Connection, player: &mut Player) {
     loop {
         debug!("tick: {}, {:?}", song_playtime, song_option);
 
+        let last_tick = Local::now().timestamp_millis();
         let tick = player_tracker.tick();
 
         if player.get_playback_status().unwrap() != PlaybackStatus::Playing {
@@ -72,29 +74,31 @@ fn tracker_loop(db: &Connection, player: &mut Player) {
 
         let song_current = get_song_data(tick.progress.metadata());
 
-        if song_option.is_some() && song_current == song_option.clone().unwrap() {
-            song_playtime += 1;
-            if song_playtime == MIN_PLAYTIME {
-                write(db, &song_current, &current_date);
+        if song_option.is_some() && song_current.is_some() && song_current.clone().unwrap() == song_option.clone().unwrap() {
+            song_playtime += Local::now().timestamp_millis() - last_tick;
+            if !written && song_playtime >= MIN_PLAYTIME_MS {
+                write(db, &song_current.unwrap(), &current_date);
+                written = true;
             }
             continue;
         }
 
-        song_option = Some(song_current);
+        written = false;
+        song_option = song_current;
         song_playtime = 0;
         current_date = Local::now().date_naive().to_string();
     }
 }
 
-fn get_song_data(data: &Metadata) -> SongData {
-    SongData {
+fn get_song_data(data: &Metadata) -> Option<SongData> {
+    Some(SongData {
         // ISSUE
         // opus only allows for one artist and joins by ","
         // other formats join by " / "
         artist: data.artists().unwrap().join(" / "),
         album: data.album_name().unwrap().to_string(),
         title: data.title().unwrap().to_string(),
-    }
+    })
 }
 
 fn write(db: &Connection, song: &SongData, current_date: &str) {

@@ -4,7 +4,7 @@ use dirs::home_dir;
 
 // pub const FILE_NAME: &str = "test.db";
 pub const FILE_NAME: &str = "mpressed.db";
-pub const MIN_PLAYTIME: u32 = 30;
+pub const MIN_PLAYTIME_MS: i64 = 60000;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SongData {

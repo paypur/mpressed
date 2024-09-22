@@ -14,9 +14,9 @@ log = "0.4.22"
 env_logger = "0.11.5"
 
 [[bin]]
-name = "daemon"
+name = "mpressed-daemon"
 path = "src/daemon/bin/main.rs"
 
 [[bin]]
-name = "client"
+name = "mpressed"
 path = "src/client/bin/main.rs"

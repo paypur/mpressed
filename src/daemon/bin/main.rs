@@ -68,8 +68,12 @@ fn tracker_loop(db: &Connection, player: &mut Player) {
         let last_tick = Local::now().timestamp_millis();
         let tick = player_tracker.tick();
 
-        if player.get_playback_status().unwrap() != PlaybackStatus::Playing {
-            continue;
+        if let Ok(status) = player.get_playback_status() {
+            if status != PlaybackStatus::Playing {
+                continue;
+            }
+        } else {
+            break;
         }
 
         let song_current = get_song_data(tick.progress.metadata());
@@ -95,9 +99,9 @@ fn get_song_data(data: &Metadata) -> Option<SongData> {
         // ISSUE
         // opus only allows for one artist and joins by ","
         // other formats join by " / "
-        artist: data.artists().unwrap().join(" / "),
-        album: data.album_name().unwrap().to_string(),
-        title: data.title().unwrap().to_string(),
+        artist: data.artists()?.join(" / "),
+        album: data.album_name()?.to_string(),
+        title: data.title()?.to_string(),
     })
 }
 

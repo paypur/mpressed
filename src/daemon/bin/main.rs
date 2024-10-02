@@ -1,7 +1,7 @@
-use std::thread::sleep;
+use std::thread;
 use std::time::Duration;
 use chrono::Local;
-use log::{debug};
+use log::{debug, error, info, log};
 use mpris::{Metadata, PlaybackStatus, Player, PlayerFinder};
 use rusqlite::{Connection};
 use mpressed::{get_db_path, SongData, MIN_PLAYTIME_MS};
@@ -42,14 +42,14 @@ fn player_loop(db: &Connection) {
     loop {
         for identity in IDENTITIES {
             if player_finder.find_by_name(identity).is_ok() {
-                println!("Showing event stream for player {}", identity);
+                info!("Staring event stream for player {}", identity);
                 tracker_loop(db, &mut player_finder.find_by_name(identity).unwrap());
-                println!("Event stream ended.");
+                info!("Event stream ended.");
                 break;
             }
         }
 
-        sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -59,8 +59,7 @@ fn tracker_loop(db: &Connection, player: &mut Player) {
     let mut song_playtime: i64 = 0;
     let mut current_date = Local::now().date_naive().to_string();
 
-    let mut player_tracker = player.track_progress(1000)
-        .expect("Failed to start progress tracker");
+    let mut player_tracker = player.track_progress(1000).expect("Failed to start progress tracker");
 
     loop {
         debug!("tick: {}, {:?}", song_playtime, song_option);
@@ -68,12 +67,12 @@ fn tracker_loop(db: &Connection, player: &mut Player) {
         let last_tick = Local::now().timestamp_millis();
         let tick = player_tracker.tick();
 
-        if let Ok(status) = player.get_playback_status() {
-            if status != PlaybackStatus::Playing {
-                continue;
-            }
-        } else {
+        if player.get_playback_status().is_err() {
             break;
+        }
+
+        if player.get_playback_status().unwrap() != PlaybackStatus::Playing {
+            continue;
         }
 
         let song_current = get_song_data(tick.progress.metadata());
@@ -134,8 +133,8 @@ fn write(db: &Connection, song: &SongData, current_date: &str) {
     } else {
         match db.execute("INSERT INTO song_plays (id, date, plays) VALUES (?1, ?2, ?3)",
                          (id, &current_date, 1)) {
-            Ok(_) => println!("Inserted song_plays: {:?}", (&song.artist, &song.album, &song.title)),
-            Err(_) => println!("Failed to insert song_plays: {:?}", (&song.artist, &song.album, &song.title)),
+            Ok(_) => info!("Inserted song_plays: {:?}", (&song.artist, &song.album, &song.title)),
+            Err(_) => error!("Failed to insert song_plays: {:?}", (&song.artist, &song.album, &song.title)),
         }
     }
 }

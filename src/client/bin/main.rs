@@ -124,12 +124,13 @@ impl SongDataAlbum {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Eq, PartialEq)]
 enum SelectedTab {
     #[default]
     Table,
     Sort,
-    Group
+    Group,
+    Filter
 }
 
 #[derive(Debug, Default, Display)]
@@ -156,9 +157,10 @@ enum Group {
 impl SelectedTab {
     pub fn prev(&mut self) {
         *self = match self {
-            SelectedTab::Table => SelectedTab::Sort,
+            SelectedTab::Table => SelectedTab::Filter,
             SelectedTab::Group => SelectedTab::Table,
             SelectedTab::Sort => SelectedTab::Group,
+            SelectedTab::Filter => SelectedTab::Sort,
         }
     }
 
@@ -166,7 +168,8 @@ impl SelectedTab {
         *self = match self {
             SelectedTab::Table => SelectedTab::Group,
             SelectedTab::Group => SelectedTab::Sort,
-            SelectedTab::Sort => SelectedTab::Table,
+            SelectedTab::Sort => SelectedTab::Filter,
+            SelectedTab::Filter => SelectedTab::Table,
         }
     }
 }
@@ -191,7 +194,6 @@ impl Group {
     }
 }
 
-#[derive(Debug, Default)]
 struct TuiState {
     data_vec_none: Vec<SongDataNone>,
     data_vec_date: Vec<SongDataDate>,
@@ -204,6 +206,7 @@ struct TuiState {
     sort_state: ListState,
     table_state: TableState,
     scroll_state: ScrollbarState,
+    // menu_state: MenuState<String>,
     exit: bool,
 }
 
@@ -232,6 +235,13 @@ impl TuiState {
             group_state: ListState::default().with_selected(Some(0)),
             table_state: TableState::default().with_selected(0),
             scroll_state: ScrollbarState::new(length),
+            // menu_state: MenuState::<String>::new(vec![
+            //     MenuItem::item("Foo", "label_foo".to_string()),
+            //     MenuItem::group("Group", vec![
+            //         MenuItem::item("Bar 1", "label_bar_1".to_string()),
+            //         MenuItem::item("Bar 2", "label_bar_1".to_string()),
+            //     ])
+            // ]),
             exit: false,
         }
     }
@@ -301,7 +311,7 @@ impl TuiState {
             .collect()
     }
 
-    fn data_sort(&mut self) {
+    fn sort_data(&mut self) {
         for sort_direction in &self.sort_priority {
             // TODO: change
             self.data_vec_none.sort_by(|a, b| {
@@ -317,14 +327,22 @@ impl TuiState {
     }
 
     fn update_data(&mut self) {
-        self.table_state.select_first();
         match self.group {
             Group::None => self.data_vec_none = TuiState::get_data_vec_none(),
             Group::Date => self.data_vec_date = TuiState::get_data_vec_date(),
             Group::Artist => self.data_vec_artist = TuiState::get_data_vec_artist(),
             Group::Album => self.data_vec_album = TuiState::get_data_vec_album(),
         };
+        self.sort_data();
+        self.table_state.select_first();
         self.scroll_reset();
+    }
+
+    fn filter(& self) {
+        todo!()
+        // add some sort off filter pop up
+        // artist: list all artists?, regex?
+        // date: week, month, year, user range
     }
 
     fn render_frame(&mut self, frame: &mut Frame) {
@@ -334,7 +352,7 @@ impl TuiState {
         ]).areas(frame.area());
 
         let [sidebar_area, table_area] = Layout::horizontal([
-            Constraint::Length(14),
+            Constraint::Length(15),
             Constraint::Fill(1)
         ]).areas(main_area);
 
@@ -360,22 +378,26 @@ impl TuiState {
             }
         }
 
+        // let menu = Menu::new();
+        // frame.render_stateful_widget(menu, menu_area, &mut self.menu_state);
+
     }
 
     fn render_sidebar(&mut self, frame: &mut Frame, area: Rect) {
-        let [group_area, sort_area] = Layout::vertical([
+        let [group_area, sort_area, filter_area] = Layout::vertical([
+            Constraint::Fill(1),
             Constraint::Fill(1),
             Constraint::Fill(1)
         ]).areas(area);
 
-        let grouping_border_style = match self.selected_tab {
+        let group_border_style = match self.selected_tab {
             SelectedTab::Group => Style::from(Color::Red),
             _ => Style::default(),
         };
 
         let group_block = Block::bordered()
-            .title(Title::from(" Grouping ").alignment(Alignment::Center))
-            .border_style(grouping_border_style)
+            .title(Title::from(" Group ").alignment(Alignment::Center))
+            .border_style(group_border_style)
             .padding(Padding::uniform(1));
 
         let group_list = List::new(["None", "Date", "Artist", "Album"])
@@ -391,18 +413,14 @@ impl TuiState {
         };
 
         let sort_block = Block::bordered()
-            .title(Title::from(" Sorting ").alignment(Alignment::Center))
+            .title(Title::from(" Sort ").alignment(Alignment::Center))
             .border_style(sort_border_style)
             .padding(Padding::uniform(1));
 
         let sort_vector = self.sort_priority.iter()
             .rev()
             .enumerate()
-            .map(|(i, sort)| {
-                let mut prefix = format!("{}. ", i+1).to_owned();
-                prefix.push_str(&sort.0.to_string());
-                prefix
-            })
+            .map(|(i, sort)| format!("{}. {} {}", i+1, if sort.1 { "⌃" } else { "⌄" }, sort.0.to_string()))
             .collect::<Vec<String>>();
 
         let sort_list = List::new(sort_vector)
@@ -410,6 +428,13 @@ impl TuiState {
             .highlight_style(SELECTED_STYLE);
 
         frame.render_stateful_widget(sort_list, sort_area, &mut self.sort_state);
+
+        let filter_block = Block::bordered()
+            .title(Title::from(" Filter ").alignment(Alignment::Center))
+            .border_style(if self.selected_tab == SelectedTab::Filter { Style::from(Color::Red) } else { Style::default() } )
+            .padding(Padding::uniform(1));
+
+        frame.render_widget(filter_block, filter_area);
     }
 
     // https://github.com/ratatui/ratatui/issues/1004
@@ -424,126 +449,71 @@ impl TuiState {
             .border_style(border_style)
             .padding(Padding::new(1, 3, 0, 0));
 
-        match self.group {
+        let header = match self.group {
+            Group::None => vec!["[Artist]", "[Album]", "[Title]", "[Plays]"],
+            Group::Date => vec!["[Date]", "[Plays]"],
+            Group::Artist => vec!["[Artist]", "[Plays]"],
+            Group::Album => vec!["[Album]", "[Plays]"]
+        }.into_iter()
+            .map(Cell::from)
+            .collect::<Row>()
+            .red()
+            .height(2);
+
+        let widths = match self.group {
+            Group::None => vec![Constraint::Fill(1), Constraint::Fill(3), Constraint::Fill(3), Constraint::Max(7)],
+            _ => vec![Constraint::Fill(1), Constraint::Max(7)]
+        };
+
+        let rows: Vec<Row> = match self.group {
             Group::None => {
-                let rows: Vec<Row> = self.data_vec_none.iter()
+                self.data_vec_none.iter()
                     .map(|data| {
                         data.ref_array()
                             .into_iter()
                             .map(|string| Cell::from(Text::from(string)))
                             .collect::<Row>()
                     })
-                    .collect();
-
-                let widths = [
-                    Constraint::Fill(1),
-                    Constraint::Fill(3),
-                    Constraint::Fill(3),
-                    Constraint::Max(7)
-                ];
-
-                let header = ["[Artist]", "[Album]", "[Title]", "[Plays]"]
-                    .into_iter()
-                    .map(Cell::from)
-                    .collect::<Row>()
-                    .red()
-                    .height(2);
-
-                let table = Table::new(rows, widths)
-                    .block(block)
-                    .header(header)
-                    .highlight_style(SELECTED_STYLE);
-
-                frame.render_stateful_widget(table, area, &mut self.table_state);
+                    .collect()
             },
             Group::Date => {
-                let rows: Vec<Row> = self.data_vec_date.iter()
+                self.data_vec_date.iter()
                     .map(|data| {
                         data.ref_array()
                             .into_iter()
                             .map(|string| Cell::from(Text::from(string)))
                             .collect::<Row>()
                     })
-                    .collect();
-
-                let widths = [
-                    Constraint::Fill(1),
-                    Constraint::Max(7)
-                ];
-
-                let header = ["[Date]", "[Plays]"]
-                    .into_iter()
-                    .map(Cell::from)
-                    .collect::<Row>()
-                    .red()
-                    .height(2);
-
-                let table = Table::new(rows, widths)
-                    .block(block)
-                    .header(header)
-                    .highlight_style(SELECTED_STYLE);
-
-                frame.render_stateful_widget(table, area, &mut self.table_state);
+                    .collect()
             },
             Group::Artist => {
-                let rows: Vec<Row> = self.data_vec_artist.iter()
+                self.data_vec_artist.iter()
                     .map(|data| {
                         data.ref_array()
                             .into_iter()
                             .map(|string| Cell::from(Text::from(string)))
                             .collect::<Row>()
                     })
-                    .collect();
-
-                let widths = [
-                    Constraint::Fill(1),
-                    Constraint::Max(7)
-                ];
-
-                let header = ["[Artist]", "[Plays]"]
-                    .into_iter()
-                    .map(Cell::from)
-                    .collect::<Row>()
-                    .red()
-                    .height(2);
-
-                let table = Table::new(rows, widths)
-                    .block(block)
-                    .header(header)
-                    .highlight_style(SELECTED_STYLE);
-
-                frame.render_stateful_widget(table, area, &mut self.table_state);
+                    .collect()
             },
             Group::Album => {
-                let rows: Vec<Row> = self.data_vec_album.iter()
+                self.data_vec_album.iter()
                     .map(|data| {
                         data.ref_array()
                             .into_iter()
                             .map(|string| Cell::from(Text::from(string)))
                             .collect::<Row>()
                     })
-                    .collect();
-
-                let widths = [
-                    Constraint::Fill(1),
-                    Constraint::Max(7)
-                ];
-
-                let header = ["[Album]", "[Plays]"]
-                    .into_iter()
-                    .map(Cell::from)
-                    .collect::<Row>()
-                    .red()
-                    .height(2);
-
-                let table = Table::new(rows, widths)
-                    .block(block)
-                    .header(header)
-                    .highlight_style(SELECTED_STYLE);
-
-                frame.render_stateful_widget(table, area, &mut self.table_state);
+                    .collect()
             }
         };
+
+        let table = Table::new(rows, widths)
+            .block(block)
+            .header(header)
+            .highlight_style(SELECTED_STYLE);
+
+        frame.render_stateful_widget(table, area, &mut self.table_state);
 
         let line = LineGauge::default()
             .style(Style::from(Color::default()))
@@ -691,6 +661,7 @@ impl TuiState {
                         KeyCode::Up => self.sort_prev(),
                         KeyCode::Down => self.sort_next(),
                         KeyCode::Enter => self.sort_select(),
+                        KeyCode::Char('s') => self.sort_reverse(),
                         _ => {}
                     }
                 }
@@ -698,6 +669,12 @@ impl TuiState {
                     match key_event.code {
                         KeyCode::Up => self.group_prev(),
                         KeyCode::Down => self.group_next(),
+                        _ => {}
+                    }
+                }
+                SelectedTab::Filter => {
+                    match key_event.code {
+                        KeyCode::Enter => self.filter(),
                         _ => {}
                     }
                 }
@@ -751,7 +728,14 @@ impl TuiState {
         let s = self.sort_priority.len() - self.sort_state.selected().unwrap() - 1;
         let temp: SortDirection = self.sort_priority.remove(s);
         self.sort_priority.push(temp);
-        self.data_sort();
+        self.sort_data();
+    }
+
+    fn sort_reverse(&mut self) {
+        // subtract because sorting_priority is reversed compared to sorting_state
+        let s = self.sort_priority.len() - self.sort_state.selected().unwrap() - 1;
+        self.sort_priority[s].1 = !self.sort_priority[s].1;
+        self.sort_data();
     }
 
     fn group_prev(&mut self) {
@@ -767,7 +751,7 @@ impl TuiState {
         self.table_state.select_first();
         self.scroll_reset();
     }
-    
+
     fn scroll_reset(&mut self) {
         self.scroll_state = ScrollbarState::new(
             match self.group {

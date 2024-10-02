@@ -3,7 +3,7 @@ use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect, Rows};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
 use ratatui::prelude::Color;
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Text, ToSpan};
@@ -13,11 +13,10 @@ use ratatui::{crossterm::event::{self, KeyCode}, symbols, Frame, Terminal};
 use rusqlite::Connection;
 use std::io;
 use std::io::Result;
-use chrono::{DateTime, Utc};
 use strum::Display;
-use mpressed::get_db_path;
+use mpressed::{date_to_unix, get_db_path};
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct SongDataNone {
     artist: String,
     album: String,
@@ -39,26 +38,6 @@ impl SongDataNone {
 
     pub fn ref_array(&self) -> [&str; 4] {
         [&self.artist, &self.album, &self.title, &self.plays_string]
-    }
-
-    pub fn artist(&self) -> &str {
-        &self.artist
-    }
-
-    pub fn album(&self) -> &str {
-        &self.album
-    }
-
-    pub fn title(&self) -> &str {
-        &self.title
-    }
-
-    pub fn plays_string(&self) -> &str {
-        &self.plays_string
-    }
-
-    pub fn plays(&self) -> u32 {
-        self.plays
     }
 }
 
@@ -343,15 +322,16 @@ impl TuiState {
             .collect::<HashMap<String, u32>>()
     }
 
-    fn data_sort(&mut self) {
+    fn sort_data(&mut self) {
         for sort_direction in &self.sort_priority {
             // TODO: change
+            // also doesnt work with weighting
             self.data_vec_none.sort_by(|a, b| {
                 let order = match sort_direction.0  {
-                    Sort::Artist => a.artist().cmp(b.artist()),
-                    Sort::Album => a.album().cmp(b.album()),
-                    Sort::Title => a.title().cmp(b.title()),
-                    Sort::Plays => a.plays().cmp(&b.plays()),
+                    Sort::Artist => a.artist.cmp(&b.artist),
+                    Sort::Album => a.album.cmp(&b.album),
+                    Sort::Title => a.title.cmp(&b.title),
+                    Sort::Plays => a.plays.cmp(&b.plays),
                 };
                 if sort_direction.1 { order.reverse() } else { order }
             })
@@ -359,13 +339,14 @@ impl TuiState {
     }
 
     fn update_data(&mut self) {
-        self.table_state.select_first();
         match self.group {
             Group::None => self.data_vec_none = TuiState::get_data_vec_none(),
             Group::Date => self.data_vec_date = TuiState::get_data_vec_date(),
             Group::Artist => self.data_vec_artist = TuiState::get_data_vec_artist(),
             Group::Album => self.data_vec_album = TuiState::get_data_vec_album(),
         };
+        self.sort_data();
+        self.table_state.select_first();
         self.scroll_reset();
     }
 
@@ -376,7 +357,7 @@ impl TuiState {
         ]).areas(frame.area());
 
         let [sidebar_area, table_area] = Layout::horizontal([
-            Constraint::Length(14),
+            Constraint::Length(15),
             Constraint::Fill(1)
         ]).areas(main_area);
 
@@ -415,14 +396,14 @@ impl TuiState {
             Constraint::Fill(1)
         ]).areas(area);
 
-        let grouping_border_style = match self.selected_tab {
+        let group_border_style = match self.selected_tab {
             SelectedTab::Group => Style::from(Color::Red),
             _ => Style::default(),
         };
 
         let group_block = Block::bordered()
-            .title(Title::from(" Grouping ").alignment(Alignment::Center))
-            .border_style(grouping_border_style)
+            .title(Title::from(" Group ").alignment(Alignment::Center))
+            .border_style(group_border_style)
             .padding(Padding::uniform(1));
 
         let group_list = List::new(["None", "Date", "Artist", "Album"])
@@ -438,18 +419,14 @@ impl TuiState {
         };
 
         let sort_block = Block::bordered()
-            .title(Title::from(" Sorting ").alignment(Alignment::Center))
+            .title(Title::from(" Sort ").alignment(Alignment::Center))
             .border_style(sort_border_style)
             .padding(Padding::uniform(1));
 
         let sort_vector = self.sort_priority.iter()
             .rev()
             .enumerate()
-            .map(|(i, sort)| {
-                let mut prefix = format!("{}. ", i+1).to_owned();
-                prefix.push_str(&sort.0.to_string());
-                prefix
-            })
+            .map(|(i, sort)| format!("{}. {} {}", i+1, if sort.1 { "⌃" } else { "⌄" }, sort.0.to_string()))
             .collect::<Vec<String>>();
 
         let sort_list = List::new(sort_vector)
@@ -537,7 +514,7 @@ impl TuiState {
                     .map(|data| {
                         Row::new(vec!(
                             Cell::new(data.artist.clone()),
-                            Cell::new((if self.weighted { format!("{:.4}%", data.plays_weighted * 100f32) } else { data.plays.to_string() }))
+                            Cell::new(if self.weighted { format!("{:.4}%", data.plays_weighted * 100f32) } else { data.plays.to_string() })
                         ))
                     })
                     .collect();
@@ -566,7 +543,7 @@ impl TuiState {
                     .map(|data| {
                         Row::new(vec!(
                             Cell::new(data.album.clone()),
-                            Cell::new((if self.weighted { format!("{:.4}%", data.plays_weighted * 100f32) } else { data.plays.to_string() }))
+                            Cell::new(if self.weighted { format!("{:.4}%", data.plays_weighted * 100f32) } else { data.plays.to_string() })
                         ))
                     })
                     .collect();
@@ -629,9 +606,7 @@ impl TuiState {
 
         let data = cloned.iter()
             .map(|song| {
-                let mut s =  song.date.clone();
-                s.push_str("T00:00:00Z");
-                (s.parse::<DateTime<Utc>>().unwrap().timestamp() as f64, song.plays as f64)
+                (date_to_unix(song.date.clone()) as f64, song.plays as f64)
             })
             .collect::<Vec<(f64, f64)>>();
 
@@ -754,6 +729,7 @@ impl TuiState {
                         KeyCode::Up => self.sort_prev(),
                         KeyCode::Down => self.sort_next(),
                         KeyCode::Enter => self.sort_select(),
+                        KeyCode::Char('s') => self.sort_reverse(),
                         _ => {}
                     }
                 }
@@ -814,7 +790,14 @@ impl TuiState {
         let s = self.sort_priority.len() - self.sort_state.selected().unwrap() - 1;
         let temp: SortDirection = self.sort_priority.remove(s);
         self.sort_priority.push(temp);
-        self.data_sort();
+        self.sort_data();
+    }
+
+    fn sort_reverse(&mut self) {
+        // subtract because sorting_priority is reversed compared to sorting_state
+        let s = self.sort_priority.len() - self.sort_state.selected().unwrap() - 1;
+        self.sort_priority[s].1 = !self.sort_priority[s].1;
+        self.sort_data();
     }
 
     fn group_prev(&mut self) {

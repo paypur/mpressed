@@ -14,9 +14,9 @@ use std::io;
 use std::io::Result;
 use chrono::{DateTime, Utc};
 use strum::Display;
-use mpressed::get_db_path;
+use mpressed::{date_to_unix, get_db_path};
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct SongDataNone {
     artist: String,
     album: String,
@@ -338,11 +338,23 @@ impl TuiState {
         self.scroll_reset();
     }
 
-    fn filter(& self) {
-        todo!()
+    fn filter(&mut self) {
         // add some sort off filter pop up
         // artist: list all artists?, regex?
         // date: week, month, year, user range
+
+
+        self.data_vec_none = self.data_vec_none.iter()
+            // crashes
+            .filter(|row| date_to_unix(row.artist.clone()) < date_to_unix("2024-09-01".to_string()))
+            .cloned()
+            .collect();
+
+
+        // self.data_vec_none = self.data_vec_none.iter()
+        //     .filter(|row| row.artist == "Demetori")
+        //     .cloned()
+        //     .collect::<Vec<SongDataNone>>();
     }
 
     fn render_frame(&mut self, frame: &mut Frame) {
@@ -552,9 +564,7 @@ impl TuiState {
 
         let data = cloned.iter()
             .map(|song| {
-                let mut s =  song.date.clone();
-                s.push_str("T00:00:00Z");
-                (s.parse::<DateTime<Utc>>().unwrap().timestamp() as f64, song.plays as f64)
+                (date_to_unix(song.date.clone()) as f64, song.plays as f64)
             })
             .collect::<Vec<(f64, f64)>>();
 

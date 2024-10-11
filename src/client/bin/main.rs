@@ -1,3 +1,5 @@
+use log::info;
+use std::collections::{HashMap, HashSet};
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event};
 use ratatui::crossterm::execute;
@@ -206,7 +208,7 @@ struct TuiState {
     sort_state: ListState,
     table_state: TableState,
     scroll_state: ScrollbarState,
-    // menu_state: MenuState<String>,
+    filter_artist: HashMap<String, bool>,
     exit: bool,
 }
 
@@ -242,6 +244,7 @@ impl TuiState {
             //         MenuItem::item("Bar 2", "label_bar_1".to_string()),
             //     ])
             // ]),
+            filter_artist: TuiState::get_filter_artist(),
             exit: false,
         }
     }
@@ -338,23 +341,39 @@ impl TuiState {
         self.scroll_reset();
     }
 
+    fn get_filter_artist() -> HashMap<String, bool> {
+        Connection::open(get_db_path())
+            .unwrap()
+            .prepare("SELECT artist FROM song_data ORDER BY artist DESC")
+            .unwrap()
+            .query_map((), |row| Ok((row.get(0)?, true)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect::<HashMap<String, bool>>()
+    }
+
+    fn update_filter_artist(&mut self) {
+
+    }
+
     fn filter(&mut self) {
         // add some sort off filter pop up
         // artist: list all artists?, regex?
         // date: week, month, year, user range
 
 
-        self.data_vec_none = self.data_vec_none.iter()
-            // crashes
-            .filter(|row| date_to_unix(row.artist.clone()) < date_to_unix("2024-09-01".to_string()))
-            .cloned()
-            .collect();
-
-
         // self.data_vec_none = self.data_vec_none.iter()
-        //     .filter(|row| row.artist == "Demetori")
+        //     // crashes
+        //     .filter(|row| row.artist.clone() <  "2024-09-01".to_string())
         //     .cloned()
-        //     .collect::<Vec<SongDataNone>>();
+        //     .collect();
+
+
+
+        self.data_vec_none = self.data_vec_none.iter()
+            .filter(|row| self.filter_artist.get(row.artist()).is_some_and(|b| *b))
+            .cloned()
+            .collect::<Vec<SongDataNone>>();
     }
 
     fn render_frame(&mut self, frame: &mut Frame) {
@@ -397,8 +416,8 @@ impl TuiState {
 
     fn render_sidebar(&mut self, frame: &mut Frame, area: Rect) {
         let [group_area, sort_area, filter_area] = Layout::vertical([
-            Constraint::Fill(1),
-            Constraint::Fill(1),
+            Constraint::Length(6),
+            Constraint::Length(6),
             Constraint::Fill(1)
         ]).areas(area);
 
@@ -410,7 +429,7 @@ impl TuiState {
         let group_block = Block::bordered()
             .title(Title::from(" Group ").alignment(Alignment::Center))
             .border_style(group_border_style)
-            .padding(Padding::uniform(1));
+            .padding(Padding::horizontal(1));
 
         let group_list = List::new(["None", "Date", "Artist", "Album"])
             .block(group_block)
@@ -427,7 +446,7 @@ impl TuiState {
         let sort_block = Block::bordered()
             .title(Title::from(" Sort ").alignment(Alignment::Center))
             .border_style(sort_border_style)
-            .padding(Padding::uniform(1));
+            .padding(Padding::horizontal(1));
 
         let sort_vector = self.sort_priority.iter()
             .rev()
@@ -443,10 +462,14 @@ impl TuiState {
 
         let filter_block = Block::bordered()
             .title(Title::from(" Filter ").alignment(Alignment::Center))
-            .border_style(if self.selected_tab == SelectedTab::Filter { Style::from(Color::Red) } else { Style::default() } )
-            .padding(Padding::uniform(1));
+            .border_style(if self.selected_tab == SelectedTab::Filter { Style::from(Color::Red) } else { Style::default() })
+            .padding(Padding::horizontal(1));
 
-        frame.render_widget(filter_block, filter_area);
+        let filter_list = List::new(self.filter_artist.keys().cloned().collect::<Vec<String>>())
+            .block(filter_block)
+            .highlight_style(SELECTED_STYLE);
+
+        frame.render_widget(filter_list, filter_area);
     }
 
     // https://github.com/ratatui/ratatui/issues/1004
@@ -534,7 +557,8 @@ impl TuiState {
 
         let mut small_area = area.clone();
         small_area.height = 1;
-        small_area.width -= 5;
+        // TODO: crashes
+        small_area.width -= 5; // 5
         small_area.x += 1;
         small_area.y += 2;
 

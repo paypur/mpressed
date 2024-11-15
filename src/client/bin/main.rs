@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect, Rows};
 use ratatui::prelude::Color;
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Text, ToSpan};
@@ -82,24 +83,20 @@ impl SongDataDate {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct SongDataArtist {
     artist: String,
-    plays_string: String,
-    plays: u32
+    plays: u32,
+    plays_weighted: f32
 }
 
 impl SongDataArtist {
-    pub fn new(artist: String, plays: u32) -> Self {
+    pub fn new(artist: String, plays: u32, plays_weighted: f32) -> Self {
         Self {
             artist,
-            plays_string: plays.to_string(),
             plays,
+            plays_weighted
         }
-    }
-
-    pub fn ref_array(&self) -> [&str; 2] {
-        [&self.artist, &self.plays_string]
     }
 }
 
@@ -204,6 +201,7 @@ struct TuiState {
     sort_state: ListState,
     table_state: TableState,
     scroll_state: ScrollbarState,
+    weighted: bool,
     exit: bool,
 }
 
@@ -232,6 +230,7 @@ impl TuiState {
             group_state: ListState::default().with_selected(Some(0)),
             table_state: TableState::default().with_selected(0),
             scroll_state: ScrollbarState::new(length),
+            weighted: false,
             exit: false,
         }
     }
@@ -280,14 +279,28 @@ impl TuiState {
     }
 
     fn get_data_vec_artist() -> Vec<SongDataArtist> {
-        Connection::open(get_db_path())
+        let mut data: Vec<SongDataArtist> = Connection::open(get_db_path())
             .unwrap()
             .prepare("SELECT artist, SUM(plays) FROM song_data JOIN song_plays ON song_data.id = song_plays.id GROUP BY artist ORDER BY SUM(plays) DESC")
             .unwrap()
-            .query_map((), |row| Ok(SongDataArtist::new(row.get(0)?, row.get::<usize, u32>(1)?)))
+            .query_map((), |row| Ok(SongDataArtist::new(row.get(0)?, row.get::<usize, u32>(1)?, 0f32)))
             .unwrap()
             .map(|r| r.unwrap())
-            .collect()
+            .collect();
+
+        let frequency = Self::get_artist_frequency();
+
+        data.iter_mut()
+            .for_each(|x| x.plays_weighted = x.plays as f32 / *frequency.get(&x.artist).expect("") as f32);
+
+        let total: f32 = data.iter()
+            .map(|x| x.plays_weighted)
+            .sum();
+
+        data.iter_mut()
+            .for_each(|x| x.plays_weighted /= total);
+
+        data
     }
 
     fn get_data_vec_album() -> Vec<SongDataAlbum> {
@@ -299,6 +312,17 @@ impl TuiState {
             .unwrap()
             .map(|r| r.unwrap())
             .collect()
+    }
+
+    fn get_artist_frequency() -> HashMap<String, u32> {
+        Connection::open(get_db_path())
+            .unwrap()
+            .prepare("SELECT artist, COUNT(artist) FROM song_data GROUP BY artist ORDER BY COUNT(artist) DESC")
+            .unwrap()
+            .query_map((), |row| Ok((row.get(0)?, row.get::<usize, u32>(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect::<HashMap<String, u32>>()
     }
 
     fn data_sort(&mut self) {
@@ -439,7 +463,7 @@ impl TuiState {
                     Constraint::Fill(1),
                     Constraint::Fill(3),
                     Constraint::Fill(3),
-                    Constraint::Max(7)
+                    Constraint::Max(10)
                 ];
 
                 let header = ["[Artist]", "[Album]", "[Title]", "[Plays]"]
@@ -468,7 +492,7 @@ impl TuiState {
 
                 let widths = [
                     Constraint::Fill(1),
-                    Constraint::Max(7)
+                    Constraint::Max(10)
                 ];
 
                 let header = ["[Date]", "[Plays]"]
@@ -488,16 +512,13 @@ impl TuiState {
             Group::Artist => {
                 let rows: Vec<Row> = self.data_vec_artist.iter()
                     .map(|data| {
-                        data.ref_array()
-                            .into_iter()
-                            .map(|string| Cell::from(Text::from(string)))
-                            .collect::<Row>()
+                        Row::new(vec!(Cell::new(data.artist.clone()), Cell::new((if self.weighted { format!("{:.4}%", data.plays_weighted * 100f32) } else { data.plays.to_string() }))))
                     })
                     .collect();
 
                 let widths = [
                     Constraint::Fill(1),
-                    Constraint::Max(7)
+                    Constraint::Max(10)
                 ];
 
                 let header = ["[Artist]", "[Plays]"]
@@ -526,7 +547,7 @@ impl TuiState {
 
                 let widths = [
                     Constraint::Fill(1),
-                    Constraint::Max(7)
+                    Constraint::Max(10)
                 ];
 
                 let header = ["[Album]", "[Plays]"]
@@ -683,6 +704,15 @@ impl TuiState {
                         KeyCode::Down => self.table_down(),
                         KeyCode::PageUp => self.table_start(),
                         KeyCode::PageDown => self.table_end(),
+                        KeyCode::Char('w') => {
+                            self.weighted = !self.weighted;
+                            self.data_vec_artist.sort_by(|a, b| {
+                                match self.weighted {
+                                    true => b.plays_weighted.total_cmp(&a.plays_weighted),
+                                    false => a.plays.cmp(&b.plays),
+                                }
+                            });
+                        },
                         _ => {}
                     }
                 }
@@ -767,7 +797,7 @@ impl TuiState {
         self.table_state.select_first();
         self.scroll_reset();
     }
-    
+
     fn scroll_reset(&mut self) {
         self.scroll_state = ScrollbarState::new(
             match self.group {

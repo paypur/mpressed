@@ -65,21 +65,18 @@ impl SongDataNone {
 #[derive(Clone, Debug, Default)]
 struct SongDataDate {
     date: String,
-    plays_string: String,
-    plays: u32
+    plays: u32,
+    plays_weighted: f32
+
 }
 
 impl SongDataDate {
-    pub fn new(date: String, plays: u32) -> Self {
+    pub fn new(date: String, plays: u32, plays_weighted: f32) -> Self {
         Self {
             date,
-            plays_string: plays.to_string(),
             plays,
+            plays_weighted
         }
-    }
-
-    pub fn ref_array(&self) -> [&str; 2] {
-        [&self.date, &self.plays_string]
     }
 }
 
@@ -103,21 +100,17 @@ impl SongDataArtist {
 #[derive(Debug, Default)]
 struct SongDataAlbum {
     album: String,
-    plays_string: String,
-    plays: u32
+    plays: u32,
+    plays_weighted: f32
 }
 
 impl SongDataAlbum {
-    pub fn new(album: String, plays: u32) -> Self {
+    pub fn new(album: String, plays: u32, plays_weighted: f32) -> Self {
         Self {
             album,
-            plays_string: plays.to_string(),
-            plays
+            plays,
+            plays_weighted
         }
-    }
-
-    pub fn ref_array(&self) -> [&str; 2] {
-        [&self.album, &self.plays_string]
     }
 }
 
@@ -272,7 +265,7 @@ impl TuiState {
             .unwrap()
             .prepare("SELECT date, SUM(plays) FROM song_plays GROUP BY date ORDER BY SUM(plays) DESC")
             .unwrap()
-            .query_map((), |row| Ok(SongDataDate::new(row.get(0)?, row.get::<usize, u32>(1)?)))
+            .query_map((), |row| Ok(SongDataDate::new(row.get(0)?, row.get::<usize, u32>(1)?, 0f32)))
             .unwrap()
             .map(|r| r.unwrap())
             .collect()
@@ -304,20 +297,45 @@ impl TuiState {
     }
 
     fn get_data_vec_album() -> Vec<SongDataAlbum> {
-        Connection::open(get_db_path())
+        let mut data: Vec<SongDataAlbum> = Connection::open(get_db_path())
             .unwrap()
             .prepare("SELECT album, SUM(plays) FROM song_data JOIN song_plays ON song_data.id = song_plays.id GROUP BY album ORDER BY SUM(plays) DESC")
             .unwrap()
-            .query_map((), |row| Ok(SongDataAlbum::new(row.get(0)?, row.get::<usize, u32>(1)?)))
+            .query_map((), |row| Ok(SongDataAlbum::new(row.get(0)?, row.get::<usize, u32>(1)?, 0f32)))
             .unwrap()
             .map(|r| r.unwrap())
-            .collect()
+            .collect();
+
+        let frequency = Self::get_album_frequency();
+
+        data.iter_mut()
+            .for_each(|x| x.plays_weighted = x.plays as f32 / *frequency.get(&x.album).expect("") as f32);
+
+        let total: f32 = data.iter()
+            .map(|x| x.plays_weighted)
+            .sum();
+
+        data.iter_mut()
+            .for_each(|x| x.plays_weighted /= total);
+
+        data
     }
 
     fn get_artist_frequency() -> HashMap<String, u32> {
         Connection::open(get_db_path())
             .unwrap()
             .prepare("SELECT artist, COUNT(artist) FROM song_data GROUP BY artist ORDER BY COUNT(artist) DESC")
+            .unwrap()
+            .query_map((), |row| Ok((row.get(0)?, row.get::<usize, u32>(1)?)))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect::<HashMap<String, u32>>()
+    }
+
+    fn get_album_frequency() -> HashMap<String, u32> {
+        Connection::open(get_db_path())
+            .unwrap()
+            .prepare("SELECT album, COUNT(album) FROM song_data GROUP BY album ORDER BY COUNT(album) DESC")
             .unwrap()
             .query_map((), |row| Ok((row.get(0)?, row.get::<usize, u32>(1)?)))
             .unwrap()
@@ -362,20 +380,25 @@ impl TuiState {
             Constraint::Fill(1)
         ]).areas(main_area);
 
+        let [table_area_small, chart_area] = Layout::horizontal([
+            Constraint::Fill(1),
+            Constraint::Fill(2)
+        ]).areas(table_area);
+
         match self.group {
             // Group::None => {}
             Group::Date => {
-                let [table_area_small, chart_area] = Layout::horizontal([
-                    Constraint::Fill(1),
-                    Constraint::Fill(2)
-                ]).areas(table_area);
-
                 self.render_sidebar(frame, sidebar_area);
                 self.render_table(frame, table_area_small);
                 self.render_line_chart_date(frame, chart_area);
                 self.render_footer(frame, footer_area);
             }
-            // Group::Artist => {}
+            // Group::Artist => {
+            //     self.render_sidebar(frame, sidebar_area);
+            //     self.render_table(frame, table_area_small);
+            //     self.render_bar_chart(frame, chart_area);
+            //     self.render_footer(frame, footer_area);
+            // }
             // Group::Album => {}
             _ => {
                 self.render_sidebar(frame, sidebar_area);
@@ -483,10 +506,10 @@ impl TuiState {
             Group::Date => {
                 let rows: Vec<Row> = self.data_vec_date.iter()
                     .map(|data| {
-                        data.ref_array()
-                            .into_iter()
-                            .map(|string| Cell::from(Text::from(string)))
-                            .collect::<Row>()
+                        Row::new(vec!(
+                            Cell::new(data.date.clone()),
+                            Cell::new(data.plays.to_string()))
+                        )
                     })
                     .collect();
 
@@ -512,7 +535,10 @@ impl TuiState {
             Group::Artist => {
                 let rows: Vec<Row> = self.data_vec_artist.iter()
                     .map(|data| {
-                        Row::new(vec!(Cell::new(data.artist.clone()), Cell::new((if self.weighted { format!("{:.4}%", data.plays_weighted * 100f32) } else { data.plays.to_string() }))))
+                        Row::new(vec!(
+                            Cell::new(data.artist.clone()),
+                            Cell::new((if self.weighted { format!("{:.4}%", data.plays_weighted * 100f32) } else { data.plays.to_string() }))
+                        ))
                     })
                     .collect();
 
@@ -538,10 +564,10 @@ impl TuiState {
             Group::Album => {
                 let rows: Vec<Row> = self.data_vec_album.iter()
                     .map(|data| {
-                        data.ref_array()
-                            .into_iter()
-                            .map(|string| Cell::from(Text::from(string)))
-                            .collect::<Row>()
+                        Row::new(vec!(
+                            Cell::new(data.album.clone()),
+                            Cell::new((if self.weighted { format!("{:.4}%", data.plays_weighted * 100f32) } else { data.plays.to_string() }))
+                        ))
                     })
                     .collect();
 
@@ -670,6 +696,7 @@ impl TuiState {
             .bar_width(1)
             .bar_gap(0)
             // .bar_style(Style::from(Color::Red))
+            .label_style(Style::new())
             .direction(Direction::Horizontal)
             .data(&data);
 
@@ -677,7 +704,7 @@ impl TuiState {
     }
 
     fn render_footer(&self, frame: &mut Frame, area: Rect) {
-        let info_footer = Paragraph::new(Line::from("(Esc/q) Quit | (Tab) Change Tab | (↑/↓) Scroll | (Page Up/Down) Jump | (r) Refresh"))
+        let info_footer = Paragraph::new(Line::from("(Esc/q) Quit | (Tab) Change Tab | (↑/↓) Scroll | (Pg Up/Down) Jump | (r) Refresh | (w) Weighted"))
             .centered()
             .block(
                 Block::bordered()
@@ -709,7 +736,13 @@ impl TuiState {
                             self.data_vec_artist.sort_by(|a, b| {
                                 match self.weighted {
                                     true => b.plays_weighted.total_cmp(&a.plays_weighted),
-                                    false => a.plays.cmp(&b.plays),
+                                    false => b.plays.cmp(&a.plays),
+                                }
+                            });
+                            self.data_vec_album.sort_by(|a, b| {
+                                match self.weighted {
+                                    true => b.plays_weighted.total_cmp(&a.plays_weighted),
+                                    false => b.plays.cmp(&a.plays),
                                 }
                             });
                         },
